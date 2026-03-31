@@ -1000,6 +1000,10 @@ button:disabled {
   background: rgba(248, 251, 255, 0.96);
 }
 
+.client-form-section .mini-form-grid.admin-form-grid {
+  align-items: start;
+}
+
 .client-form-section h4 {
   margin: 0 0 10px;
   letter-spacing: -0.02em;
@@ -1010,6 +1014,10 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.client-form-section label {
+  align-content: start;
 }
 
 .client-required-tag {
@@ -1032,6 +1040,7 @@ button:disabled {
 
 .client-input-hint {
   margin: 0;
+  min-height: 2.2em;
   color: var(--muted);
   font-size: 0.77rem;
   line-height: 1.4;
