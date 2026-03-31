@@ -212,6 +212,7 @@ const normalizeClientForm = (client?: Partial<ClientFormValues>): ClientFormValu
 });
 
 const clientFormFieldKeys = Object.keys(emptyClient) as (keyof ClientFormValues)[];
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const emptyEmployee: Omit<Employee, "id" | "provinceOfEmployment" | "active"> = {
   clientId: "",
@@ -1069,6 +1070,38 @@ const getFieldLabel = (config: Record<string, { label: string; required: boolean
 const renderFieldTitle = (config: Record<string, { label: string; required: boolean }>, key: string, fallback: string) =>
   `${getFieldLabel(config, key, fallback)}${config[key]?.required ? " *" : ""}`;
 
+const looksLikeHttpUrl = (value: string) =>
+  /^(https?:\/\/)/i.test(value.trim());
+
+const looksLikePostalCode = (value: string) =>
+  /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/.test(value.trim());
+
+const formatPhonePlaceholder = "(555) 123-4567";
+const formatPostalCodePlaceholder = "A1A 1A1";
+const httpUrlPattern = /^https?:\/\/\S+$/i;
+const postalCodePattern = /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/;
+
+const isValidEmail = (value: string) => {
+  if (!value.trim()) {
+    return true;
+  }
+  return emailPattern.test(value.trim());
+};
+
+const isValidHttpUrl = (value: string) => {
+  if (!value.trim()) {
+    return true;
+  }
+  return httpUrlPattern.test(value.trim());
+};
+
+const isValidPostalCode = (value: string) => {
+  if (!value.trim()) {
+    return true;
+  }
+  return postalCodePattern.test(value.trim());
+};
+
 function AppV2() {
   const [viewMode, setViewMode] = useState<ViewMode>("payroll");
   const [adminTab, setAdminTab] = useState<AdminTab>("company");
@@ -1428,6 +1461,28 @@ function AppV2() {
     () => clientFormFieldKeys.some((key) => currentClientForm[key].trim() !== baselineClientForm[key].trim()),
     [baselineClientForm, currentClientForm],
   );
+  const clientValidation = useMemo(() => {
+    const errors: Partial<Record<keyof ClientFormValues, string>> = {};
+    if (clientFieldConfig.name.required && !currentClientForm.name.trim()) {
+      errors.name = `${clientFieldConfig.name.label} is required.`;
+    }
+    if (currentClientForm.email.trim() && !isValidEmail(currentClientForm.email)) {
+      errors.email = "Enter a valid email address.";
+    }
+    if (currentClientForm.logoUrl.trim() && !isValidHttpUrl(currentClientForm.logoUrl)) {
+      errors.logoUrl = "Use a full URL starting with http:// or https://.";
+    }
+    if (currentClientForm.postalCode.trim() && !isValidPostalCode(currentClientForm.postalCode)) {
+      errors.postalCode = "Use a valid Canadian postal code format (A1A 1A1).";
+    }
+
+    return {
+      errors,
+      isValid: Object.keys(errors).length === 0,
+    };
+  }, [clientFieldConfig.name.label, clientFieldConfig.name.required, currentClientForm]);
+  const clientFieldErrors = clientValidation.errors;
+  const clientFormCanSave = clientValidation.isValid;
   const handleDraftChange = <K extends keyof PayRunDraft>(key: K, value: PayRunDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
   };
@@ -2607,35 +2662,123 @@ function AppV2() {
                           <section className="client-form-section">
                             <h4>Company basics</h4>
                             <div className="mini-form-grid admin-form-grid">
-                              <label>{renderFieldTitle(clientFieldConfig, "name", "Client company")}<input value={newClient.name} onChange={(event) => handleClientInput("name", event.target.value)} /></label>
-                              <label>{renderFieldTitle(clientFieldConfig, "legalName", "Legal name")}<input value={newClient.legalName} onChange={(event) => handleClientInput("legalName", event.target.value)} /></label>
-                              <label>{renderFieldTitle(clientFieldConfig, "logoUrl", "Logo URL")}<input value={newClient.logoUrl} onChange={(event) => handleClientInput("logoUrl", event.target.value)} /></label>
+                              <label className={clientFieldErrors.name ? "field-error" : undefined}>
+                                {renderFieldTitle(clientFieldConfig, "name", "Client company")}
+                                <input
+                                  value={newClient.name}
+                                  placeholder="Acme Manufacturing Ltd."
+                                  aria-invalid={Boolean(clientFieldErrors.name)}
+                                  onChange={(event) => handleClientInput("name", event.target.value)}
+                                />
+                                {clientFieldErrors.name ? <small className="field-error-text">{clientFieldErrors.name}</small> : null}
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "legalName", "Legal name")}
+                                <input
+                                  value={newClient.legalName}
+                                  placeholder="Acme Manufacturing Limited"
+                                  onChange={(event) => handleClientInput("legalName", event.target.value)}
+                                />
+                              </label>
+                              <label className={clientFieldErrors.logoUrl ? "field-error" : undefined}>
+                                {renderFieldTitle(clientFieldConfig, "logoUrl", "Logo URL")}
+                                <input
+                                  value={newClient.logoUrl}
+                                  placeholder="https://example.com/logo.png"
+                                  aria-invalid={Boolean(clientFieldErrors.logoUrl)}
+                                  onChange={(event) => handleClientInput("logoUrl", event.target.value)}
+                                />
+                                {clientFieldErrors.logoUrl
+                                  ? <small className="field-error-text">{clientFieldErrors.logoUrl}</small>
+                                  : <small>Optional. Use a full URL starting with http:// or https://.</small>}
+                              </label>
                             </div>
                           </section>
 
                           <section className="client-form-section">
                             <h4>Primary contact</h4>
                             <div className="mini-form-grid admin-form-grid">
-                              <label>{renderFieldTitle(clientFieldConfig, "contactName", "Contact name")}<input value={newClient.contactName} onChange={(event) => handleClientInput("contactName", event.target.value)} /></label>
-                              <label>{renderFieldTitle(clientFieldConfig, "email", "Email")}<input value={newClient.email} onChange={(event) => handleClientInput("email", event.target.value)} /></label>
-                              <label>{renderFieldTitle(clientFieldConfig, "phone", "Phone")}<input value={newClient.phone} onChange={(event) => handleClientInput("phone", event.target.value)} /></label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "contactName", "Contact name")}
+                                <input
+                                  value={newClient.contactName}
+                                  placeholder="Jane Doe"
+                                  onChange={(event) => handleClientInput("contactName", event.target.value)}
+                                />
+                              </label>
+                              <label className={clientFieldErrors.email ? "field-error" : undefined}>
+                                {renderFieldTitle(clientFieldConfig, "email", "Email")}
+                                <input
+                                  value={newClient.email}
+                                  type="email"
+                                  placeholder="payroll@acme.ca"
+                                  aria-invalid={Boolean(clientFieldErrors.email)}
+                                  onChange={(event) => handleClientInput("email", event.target.value)}
+                                />
+                                {clientFieldErrors.email ? <small className="field-error-text">{clientFieldErrors.email}</small> : null}
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "phone", "Phone")}
+                                <input
+                                  value={newClient.phone}
+                                  placeholder="+1 416 555 0182"
+                                  onChange={(event) => handleClientInput("phone", event.target.value)}
+                                />
+                              </label>
                             </div>
                           </section>
 
                           <section className="client-form-section">
                             <h4>Address</h4>
                             <div className="mini-form-grid admin-form-grid">
-                              <label className="span-2">{renderFieldTitle(clientFieldConfig, "addressLine1", "Address line 1")}<input value={newClient.addressLine1} onChange={(event) => handleClientInput("addressLine1", event.target.value)} /></label>
-                              <label>{renderFieldTitle(clientFieldConfig, "addressLine2", "Address line 2")}<input value={newClient.addressLine2} onChange={(event) => handleClientInput("addressLine2", event.target.value)} /></label>
-                              <label>{renderFieldTitle(clientFieldConfig, "city", "City")}<input value={newClient.city} onChange={(event) => handleClientInput("city", event.target.value)} /></label>
-                              <label>{renderFieldTitle(clientFieldConfig, "province", "Province")}<input value={newClient.province} onChange={(event) => handleClientInput("province", event.target.value)} /></label>
-                              <label>{renderFieldTitle(clientFieldConfig, "postalCode", "Postal code")}<input value={newClient.postalCode} onChange={(event) => handleClientInput("postalCode", event.target.value)} /></label>
+                              <label className="span-2">
+                                {renderFieldTitle(clientFieldConfig, "addressLine1", "Address line 1")}
+                                <input
+                                  value={newClient.addressLine1}
+                                  placeholder="123 Front Street West"
+                                  onChange={(event) => handleClientInput("addressLine1", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "addressLine2", "Address line 2")}
+                                <input
+                                  value={newClient.addressLine2}
+                                  placeholder="Suite 400"
+                                  onChange={(event) => handleClientInput("addressLine2", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "city", "City")}
+                                <input
+                                  value={newClient.city}
+                                  placeholder="Toronto"
+                                  onChange={(event) => handleClientInput("city", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "province", "Province")}
+                                <input
+                                  value={newClient.province}
+                                  placeholder="ON"
+                                  onChange={(event) => handleClientInput("province", event.target.value)}
+                                />
+                              </label>
+                              <label className={clientFieldErrors.postalCode ? "field-error" : undefined}>
+                                {renderFieldTitle(clientFieldConfig, "postalCode", "Postal code")}
+                                <input
+                                  value={newClient.postalCode}
+                                  placeholder="A1A 1A1"
+                                  aria-invalid={Boolean(clientFieldErrors.postalCode)}
+                                  onChange={(event) => handleClientInput("postalCode", event.target.value)}
+                                />
+                                {clientFieldErrors.postalCode ? <small className="field-error-text">{clientFieldErrors.postalCode}</small> : null}
+                              </label>
                             </div>
                           </section>
                         </div>
 
                         <div className="client-action-bar">
-                          <button className="primary-button" type="button" onClick={saveClient} disabled={isSavingClient}>
+                          <button className="primary-button" type="button" onClick={saveClient} disabled={isSavingClient || !clientFormCanSave}>
                             {isSavingClient ? "Saving client..." : editingClientId ? "Save client changes" : "Add client"}
                           </button>
                           {editingClientId ? (
