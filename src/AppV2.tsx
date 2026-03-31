@@ -1138,6 +1138,10 @@ function AppV2() {
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Connecting payroll studio...");
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const clientMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const employeeMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const clientMenuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const employeeMenuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   useEffect(() => {
     let active = true;
