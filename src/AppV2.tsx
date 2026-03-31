@@ -30,6 +30,18 @@ const eiStatusOptions: EiStatus[] = ["standard", "non-insurable-cra-ruling", "ow
 type ViewMode = "payroll" | "admin" | "history";
 type AdminTab = "company" | "people" | "tables";
 type ClientFormValues = Omit<Client, "id" | "active">;
+type ClientDirectorySort = "name-asc" | "employees-desc";
+type ClientDeleteIntent = {
+  id: string;
+  name: string;
+  employeeCount: number;
+  payRunCount: number;
+};
+type EmployeeDeleteIntent = {
+  id: string;
+  name: string;
+  payRunCount: number;
+};
 type PdocCompareForm = {
   employmentType: Employee["employmentType"];
   payFrequency: PayFrequency;
@@ -1073,8 +1085,15 @@ function AppV2() {
   const [newClient, setNewClient] = useState(emptyClient);
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
   const [clientSearchQuery, setClientSearchQuery] = useState("");
+  const [clientDirectorySort, setClientDirectorySort] = useState<ClientDirectorySort>("name-asc");
+  const [openClientActionId, setOpenClientActionId] = useState<string | null>(null);
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
+  const [openEmployeeActionId, setOpenEmployeeActionId] = useState<string | null>(null);
+  const [pendingClientDeleteTarget, setPendingClientDeleteTarget] = useState<ClientDeleteIntent | null>(null);
+  const [pendingEmployeeDeleteTarget, setPendingEmployeeDeleteTarget] = useState<EmployeeDeleteIntent | null>(null);
+  const [isDeletingClient, setIsDeletingClient] = useState(false);
+  const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
   const [activeTaxTable, setActiveTaxTable] = useState<TaxTableSummary | null>(null);
   const [showTaxTableWorkflow, setShowTaxTableWorkflow] = useState(false);
   const [pdocCompareForm, setPdocCompareForm] = useState<PdocCompareForm>(defaultPdocCompareForm);
@@ -1371,10 +1390,28 @@ function AppV2() {
       [client.name, client.legalName, client.contactName, client.email, client.phone, client.city]
         .some((value) => value.toLowerCase().includes(query)));
   }, [activeClients, clientSearchQuery]);
+  const sortedClients = useMemo(() => {
+    const clientsToSort = [...filteredClients];
+    if (clientDirectorySort === "employees-desc") {
+      return clientsToSort.sort((left, right) => {
+        const leftCount = employees.filter((employee) => employee.clientId === left.id && employee.active).length;
+        const rightCount = employees.filter((employee) => employee.clientId === right.id && employee.active).length;
+        if (leftCount === rightCount) {
+          return left.name.localeCompare(right.name);
+        }
+        return rightCount - leftCount;
+      });
+    }
+
+    return clientsToSort.sort((left, right) => left.name.localeCompare(right.name));
+  }, [clientDirectorySort, employees, filteredClients]);
   const selectedClientEmployeeCount = useMemo(
     () => (selectedClient ? employees.filter((employee) => employee.active && employee.clientId === selectedClient.id).length : 0),
     [employees, selectedClient],
   );
+  const pendingClientDeleteEmployeeCount = pendingClientDeleteTarget?.employeeCount ?? 0;
+  const pendingClientDeleteRunCount = pendingClientDeleteTarget?.payRunCount ?? 0;
+  const pendingEmployeeDeleteRunCount = pendingEmployeeDeleteTarget?.payRunCount ?? 0;
   const editingClient = useMemo(
     () => (editingClientId ? clients.find((client) => client.id === editingClientId) ?? null : null),
     [clients, editingClientId],
@@ -1391,7 +1428,6 @@ function AppV2() {
     () => clientFormFieldKeys.some((key) => currentClientForm[key].trim() !== baselineClientForm[key].trim()),
     [baselineClientForm, currentClientForm],
   );
-
   const handleDraftChange = <K extends keyof PayRunDraft>(key: K, value: PayRunDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
   };
@@ -1785,6 +1821,40 @@ function AppV2() {
     }
   };
 
+  const requestClientDelete = (clientId: string) => {
+    const client = clients.find((item) => item.id === clientId);
+    if (!client) {
+      return;
+    }
+
+    const employeeCount = employees.filter((employee) => employee.clientId === clientId && employee.active).length;
+    const payRunCount = recentPayRuns.filter((run) => run.clientId === clientId).length;
+    setPendingClientDeleteTarget({
+      id: client.id,
+      name: client.name,
+      employeeCount,
+      payRunCount,
+    });
+  };
+
+  const cancelClientDelete = () => {
+    setPendingClientDeleteTarget(null);
+  };
+
+  const confirmClientDelete = async () => {
+    if (!pendingClientDeleteTarget) {
+      return;
+    }
+
+    setIsDeletingClient(true);
+    try {
+      await removeClient(pendingClientDeleteTarget.id);
+      setPendingClientDeleteTarget(null);
+    } finally {
+      setIsDeletingClient(false);
+    }
+  };
+
   const removeEmployee = async (employeeId: string) => {
     const employee = employees.find((item) => item.id === employeeId);
     if (!employee) {
@@ -1808,6 +1878,38 @@ function AppV2() {
       setStatusMessage(`Employee removed: ${employee.fullName}`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not delete employee.");
+    }
+  };
+
+  const requestEmployeeDelete = (employeeId: string) => {
+    const employee = employees.find((item) => item.id === employeeId);
+    if (!employee) {
+      return;
+    }
+
+    const payRunCount = recentPayRuns.filter((run) => run.employeeId === employeeId).length;
+    setPendingEmployeeDeleteTarget({
+      id: employee.id,
+      name: getDisplayName(employee),
+      payRunCount,
+    });
+  };
+
+  const cancelEmployeeDelete = () => {
+    setPendingEmployeeDeleteTarget(null);
+  };
+
+  const confirmEmployeeDelete = async () => {
+    if (!pendingEmployeeDeleteTarget) {
+      return;
+    }
+
+    setIsDeletingEmployee(true);
+    try {
+      await removeEmployee(pendingEmployeeDeleteTarget.id);
+      setPendingEmployeeDeleteTarget(null);
+    } finally {
+      setIsDeletingEmployee(false);
     }
   };
 
@@ -2431,12 +2533,36 @@ function AppV2() {
                                 </span>
                               </button>
                               <div className="client-directory-actions">
-                                <button className="secondary-button" type="button" onClick={() => startEditingClient(client)}>
-                                  Edit
+                                <button
+                                  className="secondary-button icon-button"
+                                  type="button"
+                                  aria-label={`Client actions for ${client.name}`}
+                                  onClick={() => setOpenClientActionId((current) => (current === client.id ? null : client.id))}
+                                >
+                                  ⋯
                                 </button>
-                                <button className="danger-button" type="button" onClick={() => removeClient(client.id)}>
-                                  Delete
-                                </button>
+                                {openClientActionId === client.id ? (
+                                  <div className="row-action-menu">
+                                    <button className="secondary-button" type="button" onClick={() => {
+                                      setSelectedClientId(client.id);
+                                      setOpenClientActionId(null);
+                                    }}>
+                                      Open
+                                    </button>
+                                    <button className="secondary-button" type="button" onClick={() => {
+                                      startEditingClient(client);
+                                      setOpenClientActionId(null);
+                                    }}>
+                                      Edit
+                                    </button>
+                                    <button className="danger-button" type="button" onClick={() => {
+                                      requestClientDelete(client.id);
+                                      setOpenClientActionId(null);
+                                    }}>
+                                      Delete
+                                    </button>
+                                  </div>
+                                ) : null}
                               </div>
                             </article>
                           );
@@ -2547,12 +2673,30 @@ function AppV2() {
                             </small>
                             <small>{(employee.attachments ?? []).length} documents</small>
                             <div className="employee-actions">
-                              <button className="secondary-button" type="button" onClick={() => startEditingEmployee(employee)}>
-                                Edit
+                              <button
+                                className="secondary-button icon-button"
+                                type="button"
+                                aria-label={`Employee actions for ${getDisplayName(employee)}`}
+                                onClick={() => setOpenEmployeeActionId((current) => (current === employee.id ? null : employee.id))}
+                              >
+                                ⋯
                               </button>
-                              <button className="danger-button" type="button" onClick={() => removeEmployee(employee.id)}>
-                                Delete
-                              </button>
+                              {openEmployeeActionId === employee.id ? (
+                                <div className="row-action-menu">
+                                  <button className="secondary-button" type="button" onClick={() => {
+                                    startEditingEmployee(employee);
+                                    setOpenEmployeeActionId(null);
+                                  }}>
+                                    Edit
+                                  </button>
+                                  <button className="danger-button" type="button" onClick={() => {
+                                    requestEmployeeDelete(employee.id);
+                                    setOpenEmployeeActionId(null);
+                                  }}>
+                                    Delete
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                         </article>
@@ -3098,6 +3242,48 @@ function AppV2() {
         </section>
         ) : null}
       </main>
+
+      {pendingClientDeleteTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="delete-client-title">
+            <h3 id="delete-client-title">Delete client: {pendingClientDeleteTarget.name}</h3>
+            <p className="admin-copy">
+              This will also delete {pendingClientDeleteEmployeeCount} employee profile{pendingClientDeleteEmployeeCount === 1 ? "" : "s"}
+              {" "}and {pendingClientDeleteRunCount} pay run{pendingClientDeleteRunCount === 1 ? "" : "s"} for this client.
+            </p>
+            <p className="admin-copy">This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={cancelClientDelete}>
+                Cancel
+              </button>
+              <button className="danger-button" type="button" onClick={() => void confirmClientDelete()} disabled={isDeletingClient}>
+                {isDeletingClient ? "Deleting client..." : "Delete client"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingEmployeeDeleteTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="delete-employee-title">
+            <h3 id="delete-employee-title">Delete employee: {pendingEmployeeDeleteTarget.name}</h3>
+            <p className="admin-copy">
+              This will remove the employee profile and {pendingEmployeeDeleteRunCount} related pay run
+              {pendingEmployeeDeleteRunCount === 1 ? "" : "s"}.
+            </p>
+            <p className="admin-copy">This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={cancelEmployeeDelete}>
+                Cancel
+              </button>
+              <button className="danger-button" type="button" onClick={() => void confirmEmployeeDelete()} disabled={isDeletingEmployee}>
+                {isDeletingEmployee ? "Deleting employee..." : "Delete employee"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
