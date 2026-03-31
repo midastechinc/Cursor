@@ -1201,8 +1201,8 @@ function AppV2() {
     () => activeEmployees.filter((employee) => employee.clientId === (selectedClient?.id ?? selectedClientId)),
     [activeEmployees, selectedClient, selectedClientId],
   );
-  const selectedEmployee = clientEmployees.find((employee) => employee.id === draft.employeeId) ?? clientEmployees[0];
   const selectableEmployees = clientEmployees.length > 0 ? clientEmployees : activeEmployees;
+  const selectedEmployee = selectableEmployees.find((employee) => employee.id === draft.employeeId) ?? selectableEmployees[0];
   const calculatedVacationPayout = useMemo(() => {
     if (!selectedEmployee) {
       return 0;
@@ -1226,9 +1226,19 @@ function AppV2() {
         return current;
       }
 
+      const nextEmployeeForClient = activeEmployees.find((employee) => employee.clientId === selectedClient.id)?.id;
+      if (nextEmployeeForClient) {
+        return {
+          ...current,
+          employeeId: nextEmployeeForClient,
+        };
+      }
+
+      // Keep a valid fallback when the selected client has no employees yet.
+      const currentEmployeeIsStillActive = activeEmployees.some((employee) => employee.id === current.employeeId);
       return {
         ...current,
-        employeeId: activeEmployees.find((employee) => employee.clientId === selectedClient.id)?.id ?? "",
+        employeeId: currentEmployeeIsStillActive ? current.employeeId : (activeEmployees[0]?.id ?? ""),
       };
     });
   }, [activeEmployees, editingEmployeeId, selectedClient]);
