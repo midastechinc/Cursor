@@ -1202,6 +1202,7 @@ function AppV2() {
     [activeEmployees, selectedClient, selectedClientId],
   );
   const selectedEmployee = clientEmployees.find((employee) => employee.id === draft.employeeId) ?? clientEmployees[0];
+  const selectableEmployees = clientEmployees.length > 0 ? clientEmployees : activeEmployees;
   const calculatedVacationPayout = useMemo(() => {
     if (!selectedEmployee) {
       return 0;
@@ -1489,6 +1490,18 @@ function AppV2() {
   const clientFormCanSave = clientValidation.isValid;
   const handleDraftChange = <K extends keyof PayRunDraft>(key: K, value: PayRunDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleDraftEmployeeChange = (employeeId: string) => {
+    const employee = activeEmployees.find((item) => item.id === employeeId);
+    if (!employee) {
+      handleDraftChange("employeeId", employeeId);
+      return;
+    }
+
+    // Keep client and employee selectors in sync even if client filter was stale.
+    setSelectedClientId(employee.clientId);
+    setDraft((current) => ({ ...current, employeeId }));
   };
 
   const handleVacationModeChange = (mode: VacationHandling) => {
@@ -2227,13 +2240,16 @@ function AppV2() {
 
             <label className="span-2">
               {payrollFieldConfig.employeeId.label}
-              <select value={draft.employeeId} onChange={(event) => handleDraftChange("employeeId", event.target.value)} disabled={loading || clientEmployees.length === 0}>
-                {clientEmployees.map((employee) => (
+              <select value={draft.employeeId} onChange={(event) => handleDraftEmployeeChange(event.target.value)} disabled={loading || selectableEmployees.length === 0}>
+                {selectableEmployees.map((employee) => (
                   <option key={employee.id} value={employee.id}>
                     {getDisplayName(employee)} - {employee.role}
                   </option>
                 ))}
               </select>
+              {clientEmployees.length === 0 && activeEmployees.length > 0 ? (
+                <small>No employees are assigned to this client yet. Showing all active employees.</small>
+              ) : null}
             </label>
 
             <label className="pay-frequency-field">
