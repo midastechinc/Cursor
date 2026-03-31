@@ -31,10 +31,10 @@ if not exist "node_modules" (
 )
 
 echo Starting Payroll API server...
-start "Payroll API Server" cmd /k "cd /d \"%~dp0\" && npm run dev:server"
+start "Payroll API Server" cmd /k "cd /d ""%~dp0"" && npm run dev:server"
 
 echo Starting Payroll web app...
-start "Payroll Web App" cmd /k "cd /d \"%~dp0\" && npm run dev:client"
+start "Payroll Web App" cmd /k "cd /d ""%~dp0"" && npm run dev:client"
 
 echo.
 echo Started:
