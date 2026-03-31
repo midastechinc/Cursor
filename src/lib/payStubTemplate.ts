@@ -30,7 +30,7 @@ export type PayStubTemplateInput = {
   taxTable?: TaxTableSummary;
   createdAt: string;
   payFrequency: PayFrequency;
-  notes: string[];
+  notes?: string[];
 };
 
 const escapeHtml = (value: string) =>
@@ -89,7 +89,6 @@ export const buildClassicPayStubMarkup = ({
   taxTable,
   createdAt,
   payFrequency,
-  notes,
 }: PayStubTemplateInput) => {
   const employerName = companyProfile?.legalName || companyProfile?.name || "Payroll provider";
   const clientName = client?.legalName || client?.name || "Client company";
@@ -165,11 +164,6 @@ export const buildClassicPayStubMarkup = ({
     { label: "Employer CPP2", currentAmount: current.employerCpp2, ytdAmount: ytd?.employerCpp2 },
     { label: "Employer EI", currentAmount: current.employerEi, ytdAmount: ytd?.employerEi },
   ];
-  const notesMarkup =
-    notes.length > 0
-      ? notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")
-      : "<li>Prepared from the payroll workspace. Review remittances and year-to-date balances after posting.</li>";
-
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -238,22 +232,7 @@ export const buildClassicPayStubMarkup = ({
       .right-block { border-bottom: 1px solid var(--line); }
       .right-block:last-child { border-bottom: none; }
       .net-pay-banner { border-top: 1.5px solid var(--line); }
-      .lower-grid { display: grid; grid-template-columns: minmax(0,1fr) 2.55in; border-top: 1px solid var(--line); min-height: 1.9in; }
-      .message-area { padding: 10px; border-right: 1px solid var(--line); display: grid; grid-template-rows: auto 1fr; gap: 8px; }
-      .message-area ul { margin: 0; padding-left: 16px; font-size: 10px; line-height: 1.35; }
-      .message-fill { border: 1px dashed #b7b7b7; min-height: 1.15in; background: linear-gradient(transparent 23px, rgba(0,0,0,0.035) 24px); background-size: 100% 24px; }
-      .other-panel { display: grid; grid-template-rows: auto 1fr; }
-      .advice { margin-top: 0.12in; border: 1.5px solid var(--line); border-top-style: dashed; padding: 10px 10px 8px; }
-      .advice-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-      .advice-brand { max-width: 52%; display: grid; gap: 4px; font-size: 9px; line-height: 1.3; }
-      .advice-brand strong { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-      .non-negotiable { font-size: 14px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-      .advice-grid { margin-top: 10px; display: grid; grid-template-columns: 1fr 2.5in; gap: 14px; }
-      .advice-grid .summary-box { border: 1px solid var(--line); }
-      .advice-pay { display: grid; align-content: end; gap: 8px; }
-      .advice-pay .net-line { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; border-top: 1.5px solid var(--line); padding-top: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
-      .advice-pay .net-line strong { font-size: 20px; letter-spacing: 0; white-space: nowrap; }
-      .tiny-note { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+      .lower-grid { border-top: 1px solid var(--line); min-height: 1.35in; }
       @media print {
         body { background: white; padding: 0; }
         .sheet { width: auto; border: none; box-shadow: none; padding: 0; }
@@ -330,38 +309,9 @@ export const buildClassicPayStubMarkup = ({
           </div>
         </div>
         <div class="lower-grid">
-          <div class="message-area">
-            <div><div class="pane-title">Messages and payroll notes</div><ul>${notesMarkup}</ul></div>
-            <div class="message-fill"></div>
-          </div>
           <div class="other-panel">
             <div class="pane-title">Other</div>
             <table class="other-table"><thead><tr><th>Other</th><th>Current</th><th>YTD</th></tr></thead><tbody>${renderMoneyRows(otherRows)}</tbody></table>
-          </div>
-        </div>
-      </section>
-      <section class="advice">
-        <div class="advice-head">
-          <div class="advice-brand">
-            <strong>${escapeHtml(employerName)}</strong>
-            <span>${escapeHtml(clientName)}</span>
-            <span>${escapeHtml(textOrDash(companyProfile?.email))}${companyProfile?.phone ? ` | ${escapeHtml(companyProfile.phone)}` : ""}</span>
-          </div>
-          <div class="non-negotiable">Non Negotiable</div>
-        </div>
-        <div class="advice-grid">
-          <div class="summary-box">
-            <table><tbody>
-              <tr><td>Employee</td><td>${escapeHtml(displayName)}</td></tr>
-              <tr><td>Associate ID</td><td>${escapeHtml(employeeNumber)}</td></tr>
-              <tr><td>Pay date</td><td>${escapeHtml(payDate)}</td></tr>
-              <tr><td>Pay period</td><td>${escapeHtml(`${payStartDate} to ${payEndDate}`)}</td></tr>
-              <tr><td>No. pay period</td><td>${escapeHtml(getFrequencyLabel(payFrequency))}</td></tr>
-            </tbody></table>
-          </div>
-          <div class="advice-pay">
-            <div class="tiny-note">Notification of deposit to account on file</div>
-            <div class="net-line"><span>Net pay</span><strong>${escapeHtml(formatCurrency(current.netPay))}</strong></div>
           </div>
         </div>
       </section>

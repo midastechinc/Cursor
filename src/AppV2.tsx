@@ -17,6 +17,7 @@ import type {
   PayRunRecord,
   PayrollBreakdown,
   PayrollPreviewResponse,
+  Pd7aReportInput,
   PayStubTotals,
   TaxTableSummary,
   VacationHandling,
@@ -79,7 +80,7 @@ const defaultDraft: PayRunDraft = {
   vacationHandling: "accrue",
   accrueVacation: true,
   vacationPayoutAmount: 0,
-  regularHours: 80,
+  regularHours: 173.33,
   overtimeHours: 0,
   bonusAmount: 0,
   taxableBenefits: 0,
@@ -1064,6 +1065,200 @@ const parseExpectedValue = (value: string) => {
 const getDisplayName = (employee: Pick<Employee, "fullName" | "firstName" | "lastName">) =>
   employee.fullName || [employee.firstName, employee.lastName].filter(Boolean).join(" ").trim() || "Employee";
 
+const DEFAULT_REGULAR_HOURS_BY_FREQUENCY: Record<PayFrequency, number> = {
+  weekly: 40,
+  biweekly: 80,
+  "semi-monthly": 86.67,
+  monthly: 173.33,
+};
+
+const getDefaultRegularHours = (frequency: PayFrequency) => DEFAULT_REGULAR_HOURS_BY_FREQUENCY[frequency];
+
+const normalizeBusinessNumber = (value: string) => {
+  const alphaNumeric = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return alphaNumeric.slice(0, 15);
+};
+
+const buildPd7aReportMarkup = ({
+  remitterName,
+  remitterBn,
+  periodStart,
+  periodEnd,
+  dueDate,
+  generatedAt,
+  runCount,
+  employeeCpp,
+  employeeCpp2,
+  employerCpp,
+  employerCpp2,
+  employeeEi,
+  employerEi,
+  incomeTax,
+  priorBalance,
+  amountPaid,
+  sourceSummary,
+}: Pd7aReportInput) => {
+  const periodLabel = formatPayPeriod(periodStart, periodEnd);
+  const generationDate = formatStatementDate(generatedAt);
+  const totalCpp = employeeCpp + employeeCpp2 + employerCpp + employerCpp2;
+  const totalEi = employeeEi + employerEi;
+  const totalCurrentRemittance = totalCpp + totalEi + incomeTax;
+  const balanceForward = priorBalance - amountPaid;
+  const netRemittanceDue = totalCurrentRemittance + balanceForward;
+  const amountToRemit = netRemittanceDue > 0 ? netRemittanceDue : 0;
+  const creditBalance = netRemittanceDue < 0 ? Math.abs(netRemittanceDue) : 0;
+
+  const safeBn = normalizeBusinessNumber(remitterBn) || "BN not provided";
+  const safeRemitter = remitterName.trim() || "Payroll remitter";
+  const safeSourceSummary = sourceSummary.trim() || "CRA-style PD7A summary (generated in-app).";
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PD7A Report - ${escapeHtml(safeRemitter)}</title>
+    <style>
+      @page { size: Letter portrait; margin: 0.45in; }
+      :root {
+        color-scheme: light;
+        font-family: Arial, Helvetica, sans-serif;
+        --ink: #141414;
+        --muted: #555;
+        --line: #262626;
+        --soft: #d9d9d9;
+        --wash: #f3f3f3;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 14px; background: #ededed; color: var(--ink); }
+      .sheet { max-width: 8.1in; margin: 0 auto; background: white; border: 1px solid #c8c8c8; padding: 0.18in 0.2in 0.2in; }
+      .topline { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+      .topline h1 { margin: 0; font-size: 17px; letter-spacing: 0.03em; text-transform: uppercase; }
+      .topline p { margin: 4px 0 0; font-size: 10px; color: var(--muted); }
+      .stamp { text-align: right; font-size: 9px; color: var(--muted); }
+      .meta { margin-top: 10px; border: 1px solid var(--line); }
+      .meta table, .grid table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      .meta td { border-bottom: 1px solid var(--line); padding: 6px 8px; font-size: 10px; vertical-align: top; }
+      .meta tr:last-child td { border-bottom: none; }
+      .meta td:first-child { width: 34%; font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--wash); font-weight: 700; }
+      .section { margin-top: 10px; border: 1px solid var(--line); }
+      .section h2 { margin: 0; padding: 7px 8px; border-bottom: 1px solid var(--line); background: var(--wash); font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; }
+      .grid td, .grid th { border-bottom: 1px solid var(--soft); padding: 6px 8px; font-size: 10px; }
+      .grid tr:last-child td { border-bottom: none; }
+      .grid th { text-align: left; font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; background: #fafafa; border-bottom: 1px solid var(--line); }
+      .grid td:nth-child(2), .grid th:nth-child(2) { text-align: right; width: 2.05in; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .grid tr.total td { font-weight: 700; border-top: 1.5px solid var(--line); border-bottom: 1.5px solid var(--line); }
+      .split { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .note { margin-top: 10px; font-size: 9px; color: var(--muted); line-height: 1.35; }
+      .voucher { margin-top: 12px; border: 1.5px dashed var(--line); padding: 8px; }
+      .voucher h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+      .voucher-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 11px; }
+      .voucher-row strong { font-size: 20px; white-space: nowrap; }
+      .tiny { margin-top: 6px; font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+      @media print {
+        body { background: white; padding: 0; }
+        .sheet { border: none; padding: 0; max-width: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="sheet">
+      <section class="topline">
+        <div>
+          <h1>PD7A - Statement of Account for Current Source Deductions</h1>
+          <p>Regular and quarterly remitter format (generated from saved payroll runs)</p>
+        </div>
+        <div class="stamp">
+          <div>Generated: ${escapeHtml(generationDate)}</div>
+          <div>Report period: ${escapeHtml(periodLabel)}</div>
+          <div>Runs included: ${escapeHtml(String(runCount))}</div>
+        </div>
+      </section>
+
+      <section class="meta">
+        <table><tbody>
+          <tr><td>Remitter name</td><td>${escapeHtml(safeRemitter)}</td></tr>
+          <tr><td>Payroll account number (BN)</td><td>${escapeHtml(safeBn)}</td></tr>
+          <tr><td>Remittance period</td><td>${escapeHtml(periodLabel)}</td></tr>
+          <tr><td>Remittance due date</td><td>${escapeHtml(formatStatementDate(dueDate))}</td></tr>
+          <tr><td>Tax table source</td><td>${escapeHtml(safeSourceSummary)}</td></tr>
+        </tbody></table>
+      </section>
+
+      <section class="section grid">
+        <h2>Current source deductions</h2>
+        <table>
+          <thead><tr><th>Line item</th><th>Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Employee CPP + CPP2 deductions</td><td>${escapeHtml(formatCurrency(employeeCpp + employeeCpp2))}</td></tr>
+            <tr><td>Employer CPP + CPP2 contributions</td><td>${escapeHtml(formatCurrency(employerCpp + employerCpp2))}</td></tr>
+            <tr><td>Employee EI deductions</td><td>${escapeHtml(formatCurrency(employeeEi))}</td></tr>
+            <tr><td>Employer EI contributions</td><td>${escapeHtml(formatCurrency(employerEi))}</td></tr>
+            <tr><td>Income tax deducted</td><td>${escapeHtml(formatCurrency(incomeTax))}</td></tr>
+            <tr class="total"><td>Total current remittance</td><td>${escapeHtml(formatCurrency(totalCurrentRemittance))}</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="split">
+        <div class="section grid">
+          <h2>Account balance movement</h2>
+          <table>
+            <thead><tr><th>Description</th><th>Amount</th></tr></thead>
+            <tbody>
+              <tr><td>Prior balance</td><td>${escapeHtml(formatCurrency(priorBalance))}</td></tr>
+              <tr><td>Amount already paid</td><td>${escapeHtml(formatCurrency(amountPaid))}</td></tr>
+              <tr><td>Balance forward</td><td>${escapeHtml(formatCurrency(balanceForward))}</td></tr>
+              <tr class="total"><td>Net remittance due</td><td>${escapeHtml(formatCurrency(netRemittanceDue))}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="section grid">
+          <h2>Statutory subtotal check</h2>
+          <table>
+            <thead><tr><th>Subtotal</th><th>Amount</th></tr></thead>
+            <tbody>
+              <tr><td>Total CPP (employee + employer)</td><td>${escapeHtml(formatCurrency(totalCpp))}</td></tr>
+              <tr><td>Total EI (employee + employer)</td><td>${escapeHtml(formatCurrency(totalEi))}</td></tr>
+              <tr><td>Total income tax</td><td>${escapeHtml(formatCurrency(incomeTax))}</td></tr>
+              <tr class="total"><td>Current statutory total</td><td>${escapeHtml(formatCurrency(totalCurrentRemittance))}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="voucher">
+        <h3>Remittance voucher (summary)</h3>
+        <div class="voucher-row"><span>Amount to remit</span><strong>${escapeHtml(formatCurrency(amountToRemit))}</strong></div>
+        <div class="voucher-row"><span>Credit balance</span><strong>${escapeHtml(formatCurrency(creditBalance))}</strong></div>
+        <div class="tiny">For official filing and payment instructions, confirm details against CRA-issued PD7A / My Business Account.</div>
+      </section>
+
+      <p class="note">
+        This report uses CRA PD7A-style sections (remitter identity, current source deductions, balance movement, and remittance voucher)
+        and is intended as an internal worksheet. Verify all figures and account details before submitting any remittance.
+      </p>
+    </main>
+  </body>
+</html>`;
+};
+
+const printPd7aReportWindow = (input: Pd7aReportInput) => {
+  const printWindow = window.open("", "_blank", "width=1440,height=980");
+  if (!printWindow) {
+    throw new Error("The browser blocked the print window. Please allow pop-ups for this site.");
+  }
+
+  printWindow.document.write(buildPd7aReportMarkup(input));
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.onload = () => {
+    printWindow.print();
+    printWindow.onafterprint = () => {
+      printWindow.close();
+    };
+  };
+};
+
 const getFieldLabel = (config: Record<string, { label: string; required: boolean }>, key: string, fallback: string) =>
   config[key]?.label || fallback;
 
@@ -1515,7 +1710,22 @@ function AppV2() {
   const clientFieldErrors = clientValidation.errors;
   const clientFormCanSave = clientValidation.isValid;
   const handleDraftChange = <K extends keyof PayRunDraft>(key: K, value: PayRunDraft[K]) => {
-    setDraft((current) => ({ ...current, [key]: value }));
+    setDraft((current) => {
+      if (key === "payFrequency") {
+        const nextFrequency = value as PayFrequency;
+        return {
+          ...current,
+          payFrequency: nextFrequency,
+          regularHours: getDefaultRegularHours(nextFrequency),
+        };
+      }
+
+      return { ...current, [key]: value };
+    });
+  };
+
+  const handlePayFrequencyChange = (frequency: PayFrequency) => {
+    handleDraftChange("payFrequency", frequency);
   };
 
   const handleDraftEmployeeChange = (employeeId: string) => {
@@ -2177,6 +2387,77 @@ function AppV2() {
     }
   };
 
+  const printPd7aReport = () => {
+    const periodStart = draft.payPeriodStart;
+    const periodEnd = draft.payPeriodEnd;
+    if (!periodStart || !periodEnd) {
+      setStatusMessage("Set the pay period start and end dates before printing PD7A.");
+      return;
+    }
+
+    const matchingRuns = recentPayRuns
+      .filter((run) => run.payPeriodStart >= periodStart && run.payPeriodEnd <= periodEnd)
+      .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+
+    if (matchingRuns.length === 0) {
+      setStatusMessage("No saved pay runs were found for the selected period. Save at least one run first.");
+      return;
+    }
+
+    const totals = matchingRuns.reduce(
+      (accumulator, run) => {
+        const breakdown = run.payStub?.breakdown;
+        if (!breakdown) {
+          return accumulator;
+        }
+
+        accumulator.employeeCpp += breakdown.cpp;
+        accumulator.employeeCpp2 += breakdown.cpp2;
+        accumulator.employerCpp += breakdown.employerCpp;
+        accumulator.employerCpp2 += breakdown.employerCpp2;
+        accumulator.employeeEi += breakdown.ei;
+        accumulator.employerEi += breakdown.employerEi;
+        accumulator.incomeTax += breakdown.federalTax + breakdown.provincialTax;
+        return accumulator;
+      },
+      {
+        employeeCpp: 0,
+        employeeCpp2: 0,
+        employerCpp: 0,
+        employerCpp2: 0,
+        employeeEi: 0,
+        employerEi: 0,
+        incomeTax: 0,
+      },
+    );
+
+    try {
+      printPd7aReportWindow({
+        remitterName: companyProfile.legalName || companyProfile.name || "Payroll remitter",
+        remitterBn: "BN-RP not set",
+        periodStart,
+        periodEnd,
+        dueDate: periodEnd,
+        generatedAt: new Date().toISOString(),
+        runCount: matchingRuns.length,
+        employeeCpp: totals.employeeCpp,
+        employeeCpp2: totals.employeeCpp2,
+        employerCpp: totals.employerCpp,
+        employerCpp2: totals.employerCpp2,
+        employeeEi: totals.employeeEi,
+        employerEi: totals.employerEi,
+        incomeTax: totals.incomeTax,
+        priorBalance: 0,
+        amountPaid: 0,
+        sourceSummary: activeTaxTable?.sourceSummary ?? "Generated from saved payroll runs.",
+      });
+
+      setStatusMessage(`Opened PD7A report for ${formatPayPeriod(periodStart, periodEnd)}.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not print the PD7A report.");
+    }
+  };
+
   return (
     <div className="app-shell">
       <div className="backdrop backdrop-left" />
@@ -2280,7 +2561,7 @@ function AppV2() {
 
             <label className="pay-frequency-field">
               {payrollFieldConfig.payFrequency.label}
-              <select value={draft.payFrequency} onChange={(event) => handleDraftChange("payFrequency", event.target.value as PayFrequency)}>
+              <select value={draft.payFrequency} onChange={(event) => handlePayFrequencyChange(event.target.value as PayFrequency)}>
                 {payFrequencyOptions.map((frequency) => (
                   <option key={frequency} value={frequency}>
                     {getFrequencyLabel(frequency)}
@@ -2486,6 +2767,9 @@ function AppV2() {
             </button>
             <button className="secondary-button wide-button" type="button" onClick={printCurrentPayStub} disabled={!selectedEmployee || !payroll}>
               Print current pay stub
+            </button>
+            <button className="secondary-button wide-button" type="button" onClick={printPd7aReport} disabled={recentPayRuns.length === 0}>
+              Print PD7A report
             </button>
             {editingPayRunId ? (
               <button className="secondary-button wide-button" type="button" onClick={resetPayRunForm}>
