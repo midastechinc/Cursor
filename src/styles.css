@@ -1306,6 +1306,17 @@ button:disabled {
   gap: 8px;
 }
 
+.employee-actions {
+  position: relative;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.employee-actions .row-action-menu {
+  position: static;
+  margin-top: 2px;
+}
+
 .mini-form,
 .compliance-card,
 .history-card,

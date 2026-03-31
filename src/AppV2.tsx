@@ -1212,11 +1212,27 @@ function AppV2() {
   }, [draft, selectedEmployee]);
 
   useEffect(() => {
-    if (!selectedClient) {
+    if (!selectedClient || editingEmployeeId) {
       return;
     }
 
-    setNewEmployee((current) => (editingEmployeeId ? current : { ...current, clientId: selectedClient.id }));
+    setNewEmployee((current) => {
+      // Never override an in-progress add form that already has user-entered data.
+      const hasTypedData = Boolean(
+        current.firstName.trim()
+        || current.lastName.trim()
+        || current.role.trim()
+        || (current.email ?? "").trim()
+        || (current.phone ?? "").trim()
+        || (current.attachments ?? []).length > 0,
+      );
+
+      if (hasTypedData) {
+        return current;
+      }
+
+      return { ...current, clientId: selectedClient.id };
+    });
     setDraft((current) => {
       const employeeStillMatchesClient = activeEmployees.some(
         (employee) => employee.id === current.employeeId && employee.clientId === selectedClient.id,
