@@ -29,6 +29,7 @@ const cppStatusOptions: CppStatus[] = ["standard", "exempt-under-18", "exempt-70
 const eiStatusOptions: EiStatus[] = ["standard", "non-insurable-cra-ruling", "owner-related-pending-ruling", "self-employed-non-insurable"];
 type ViewMode = "payroll" | "admin" | "history";
 type AdminTab = "company" | "people" | "tables";
+type ClientFormValues = Omit<Client, "id" | "active">;
 type PdocCompareForm = {
   employmentType: Employee["employmentType"];
   payFrequency: PayFrequency;
@@ -183,6 +184,22 @@ const emptyClient: Omit<Client, "id" | "active"> = {
   province: "ON",
   postalCode: "",
 };
+
+const normalizeClientForm = (client?: Partial<ClientFormValues>): ClientFormValues => ({
+  name: client?.name ?? "",
+  legalName: client?.legalName ?? "",
+  contactName: client?.contactName ?? "",
+  email: client?.email ?? "",
+  phone: client?.phone ?? "",
+  logoUrl: client?.logoUrl ?? "",
+  addressLine1: client?.addressLine1 ?? "",
+  addressLine2: client?.addressLine2 ?? "",
+  city: client?.city ?? "",
+  province: client?.province ?? "ON",
+  postalCode: client?.postalCode ?? "",
+});
+
+const clientFormFieldKeys = Object.keys(emptyClient) as (keyof ClientFormValues)[];
 
 const emptyEmployee: Omit<Employee, "id" | "provinceOfEmployment" | "active"> = {
   clientId: "",
@@ -1055,6 +1072,7 @@ function AppV2() {
   const [editingPayRunId, setEditingPayRunId] = useState<string | null>(null);
   const [newClient, setNewClient] = useState(emptyClient);
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
+  const [clientSearchQuery, setClientSearchQuery] = useState("");
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [activeTaxTable, setActiveTaxTable] = useState<TaxTableSummary | null>(null);
@@ -1343,6 +1361,36 @@ function AppV2() {
   const payrollFieldConfig = appSettings.payrollFormFields ?? defaultAppSettings.payrollFormFields;
   const employeeFieldConfig = appSettings.employeeFormFields ?? defaultAppSettings.employeeFormFields;
   const clientFieldConfig = appSettings.clientFormFields ?? defaultAppSettings.clientFormFields;
+  const filteredClients = useMemo(() => {
+    const query = clientSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return activeClients;
+    }
+
+    return activeClients.filter((client) =>
+      [client.name, client.legalName, client.contactName, client.email, client.phone, client.city]
+        .some((value) => value.toLowerCase().includes(query)));
+  }, [activeClients, clientSearchQuery]);
+  const selectedClientEmployeeCount = useMemo(
+    () => (selectedClient ? employees.filter((employee) => employee.active && employee.clientId === selectedClient.id).length : 0),
+    [employees, selectedClient],
+  );
+  const editingClient = useMemo(
+    () => (editingClientId ? clients.find((client) => client.id === editingClientId) ?? null : null),
+    [clients, editingClientId],
+  );
+  const baselineClientForm = useMemo(
+    () => normalizeClientForm(editingClient ?? undefined),
+    [editingClient],
+  );
+  const currentClientForm = useMemo(
+    () => normalizeClientForm(newClient),
+    [newClient],
+  );
+  const clientFormHasChanges = useMemo(
+    () => clientFormFieldKeys.some((key) => currentClientForm[key].trim() !== baselineClientForm[key].trim()),
+    [baselineClientForm, currentClientForm],
+  );
 
   const handleDraftChange = <K extends keyof PayRunDraft>(key: K, value: PayRunDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -2339,57 +2387,142 @@ function AppV2() {
 
               {adminTab === "people" ? (
                 <>
-                  <div className="detail-card">
-                    <h3>{editingClientId ? "Edit client company" : "Client settings"}</h3>
-                    <p className="admin-copy">Keep client companies separate so each one can hold its own employees and payroll history.</p>
-                    <div className="mini-form-grid admin-form-grid">
-                      <label>{renderFieldTitle(clientFieldConfig, "name", "Client company")}<input value={newClient.name} onChange={(event) => handleClientInput("name", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "legalName", "Legal name")}<input value={newClient.legalName} onChange={(event) => handleClientInput("legalName", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "contactName", "Contact name")}<input value={newClient.contactName} onChange={(event) => handleClientInput("contactName", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "email", "Email")}<input value={newClient.email} onChange={(event) => handleClientInput("email", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "phone", "Phone")}<input value={newClient.phone} onChange={(event) => handleClientInput("phone", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "logoUrl", "Logo URL")}<input value={newClient.logoUrl} onChange={(event) => handleClientInput("logoUrl", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "addressLine1", "Address line 1")}<input value={newClient.addressLine1} onChange={(event) => handleClientInput("addressLine1", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "addressLine2", "Address line 2")}<input value={newClient.addressLine2} onChange={(event) => handleClientInput("addressLine2", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "city", "City")}<input value={newClient.city} onChange={(event) => handleClientInput("city", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "province", "Province")}<input value={newClient.province} onChange={(event) => handleClientInput("province", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "postalCode", "Postal code")}<input value={newClient.postalCode} onChange={(event) => handleClientInput("postalCode", event.target.value)} /></label>
-                    </div>
-                    <button className="primary-button" type="button" onClick={saveClient} disabled={isSavingClient}>
-                      {isSavingClient ? "Saving client..." : editingClientId ? "Save client changes" : "Add client"}
-                    </button>
-                    {editingClientId ? (
-                      <button className="secondary-button wide-button" type="button" onClick={resetClientForm}>
-                        Cancel client edit
-                      </button>
-                    ) : null}
-                  </div>
+                  <div className="client-settings-layout">
+                    <aside className="detail-card client-directory-card">
+                      <div className="panel-heading compact">
+                        <div>
+                          <span className="section-tag">Clients</span>
+                          <h3>Client directory</h3>
+                        </div>
+                        <span className="client-directory-count">{activeClients.length}</span>
+                      </div>
 
-                  <div className="detail-card admin-list-card">
-                    <h3>Client directory</h3>
-                    <div className="employee-list">
-                      {activeClients.map((client) => (
-                        <article key={client.id} className="employee-card">
+                      <label className="compact-field">
+                        Search clients
+                        <input
+                          type="search"
+                          placeholder="Search by name, contact, city, email..."
+                          value={clientSearchQuery}
+                          onChange={(event) => setClientSearchQuery(event.target.value)}
+                        />
+                      </label>
+
+                      <div className="client-directory-list">
+                        {filteredClients.map((client) => {
+                          const isSelected = selectedClient?.id === client.id;
+                          const employeeCount = employees.filter(
+                            (employee) => employee.clientId === client.id && employee.active,
+                          ).length;
+
+                          return (
+                            <article key={client.id} className={`client-directory-item${isSelected ? " active" : ""}`}>
+                              <button
+                                className="client-directory-main"
+                                type="button"
+                                onClick={() => setSelectedClientId(client.id)}
+                              >
+                                <span className="client-directory-initials">
+                                  {(client.name || "Client").slice(0, 2).toUpperCase()}
+                                </span>
+                                <span className="client-directory-copy">
+                                  <strong>{client.name}</strong>
+                                  <small>{client.contactName || client.legalName || "Client company"}</small>
+                                  <small>{employeeCount} employees</small>
+                                </span>
+                              </button>
+                              <div className="client-directory-actions">
+                                <button className="secondary-button" type="button" onClick={() => startEditingClient(client)}>
+                                  Edit
+                                </button>
+                                <button className="danger-button" type="button" onClick={() => removeClient(client.id)}>
+                                  Delete
+                                </button>
+                              </div>
+                            </article>
+                          );
+                        })}
+                        {filteredClients.length === 0 ? (
+                          <p className="admin-copy no-margin">No clients match this search yet.</p>
+                        ) : null}
+                      </div>
+                    </aside>
+
+                    <div className="client-settings-detail">
+                      <div className="detail-card client-profile-card">
+                        <div className="client-profile-mark">
+                          {(selectedClient?.name || newClient.name || "CL").slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="client-profile-copy">
+                          <span className="section-tag">Selected client</span>
+                          <h3>{selectedClient?.name || "No client selected"}</h3>
+                          <p className="admin-copy">
+                            {selectedClient
+                              ? `Managing ${selectedClientEmployeeCount} employee profiles for this client.`
+                              : "Create your first client to start organizing employees and pay run history."}
+                          </p>
+                          <div className="client-profile-meta">
+                            <span>{selectedClient?.contactName || "No contact set"}</span>
+                            <span>{selectedClient?.email || "No email set"}</span>
+                            <span>{selectedClient?.city || "No city set"}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="detail-card">
+                        <div className="client-form-head">
                           <div>
-                            <strong>{client.name}</strong>
-                            <span>{client.contactName || client.legalName || "Client company"}</span>
+                            <h3>{editingClientId ? "Edit client company" : "Client settings"}</h3>
+                            <p className="admin-copy">Keep client companies separate so each one can hold its own employees and payroll history.</p>
                           </div>
-                          <div className="employee-side">
-                            <small>{employees.filter((employee) => employee.clientId === client.id && employee.active).length} employees</small>
-                            <div className="employee-actions">
-                              <button className="secondary-button" type="button" onClick={() => startEditingClient(client)}>
-                                Edit
-                              </button>
-                              <button className="secondary-button" type="button" onClick={() => setSelectedClientId(client.id)}>
-                                Open
-                              </button>
-                              <button className="danger-button" type="button" onClick={() => removeClient(client.id)}>
-                                Delete
-                              </button>
+                          {clientFormHasChanges ? <span className="draft-pill">Unsaved changes</span> : null}
+                        </div>
+
+                        <div className="client-form-sections">
+                          <section className="client-form-section">
+                            <h4>Company basics</h4>
+                            <div className="mini-form-grid admin-form-grid">
+                              <label>{renderFieldTitle(clientFieldConfig, "name", "Client company")}<input value={newClient.name} onChange={(event) => handleClientInput("name", event.target.value)} /></label>
+                              <label>{renderFieldTitle(clientFieldConfig, "legalName", "Legal name")}<input value={newClient.legalName} onChange={(event) => handleClientInput("legalName", event.target.value)} /></label>
+                              <label>{renderFieldTitle(clientFieldConfig, "logoUrl", "Logo URL")}<input value={newClient.logoUrl} onChange={(event) => handleClientInput("logoUrl", event.target.value)} /></label>
                             </div>
-                          </div>
-                        </article>
-                      ))}
+                          </section>
+
+                          <section className="client-form-section">
+                            <h4>Primary contact</h4>
+                            <div className="mini-form-grid admin-form-grid">
+                              <label>{renderFieldTitle(clientFieldConfig, "contactName", "Contact name")}<input value={newClient.contactName} onChange={(event) => handleClientInput("contactName", event.target.value)} /></label>
+                              <label>{renderFieldTitle(clientFieldConfig, "email", "Email")}<input value={newClient.email} onChange={(event) => handleClientInput("email", event.target.value)} /></label>
+                              <label>{renderFieldTitle(clientFieldConfig, "phone", "Phone")}<input value={newClient.phone} onChange={(event) => handleClientInput("phone", event.target.value)} /></label>
+                            </div>
+                          </section>
+
+                          <section className="client-form-section">
+                            <h4>Address</h4>
+                            <div className="mini-form-grid admin-form-grid">
+                              <label className="span-2">{renderFieldTitle(clientFieldConfig, "addressLine1", "Address line 1")}<input value={newClient.addressLine1} onChange={(event) => handleClientInput("addressLine1", event.target.value)} /></label>
+                              <label>{renderFieldTitle(clientFieldConfig, "addressLine2", "Address line 2")}<input value={newClient.addressLine2} onChange={(event) => handleClientInput("addressLine2", event.target.value)} /></label>
+                              <label>{renderFieldTitle(clientFieldConfig, "city", "City")}<input value={newClient.city} onChange={(event) => handleClientInput("city", event.target.value)} /></label>
+                              <label>{renderFieldTitle(clientFieldConfig, "province", "Province")}<input value={newClient.province} onChange={(event) => handleClientInput("province", event.target.value)} /></label>
+                              <label>{renderFieldTitle(clientFieldConfig, "postalCode", "Postal code")}<input value={newClient.postalCode} onChange={(event) => handleClientInput("postalCode", event.target.value)} /></label>
+                            </div>
+                          </section>
+                        </div>
+
+                        <div className="client-action-bar">
+                          <button className="primary-button" type="button" onClick={saveClient} disabled={isSavingClient}>
+                            {isSavingClient ? "Saving client..." : editingClientId ? "Save client changes" : "Add client"}
+                          </button>
+                          {editingClientId ? (
+                            <button className="secondary-button wide-button" type="button" onClick={resetClientForm}>
+                              Cancel client edit
+                            </button>
+                          ) : (
+                            <button className="secondary-button wide-button" type="button" onClick={resetClientForm} disabled={!clientFormHasChanges}>
+                              Reset draft
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
