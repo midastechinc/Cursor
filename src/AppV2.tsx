@@ -70,6 +70,48 @@ type PdocExpectedValues = {
   netPay: string;
 };
 
+type PdocReportInput = {
+  employeeName: string;
+  employerName: string;
+  payFrequency: PayFrequency;
+  datePaid: string;
+  province: string;
+  federalClaimAmount: number;
+  provincialClaimAmount: number;
+  salaryOrWagesIncome: number;
+  totalCashIncome: number;
+  federalTaxDeduction: number;
+  provincialTaxDeduction: number;
+  totalTaxDeductions: number;
+  cppDeductions: number;
+  cpp2Deductions: number;
+  eiDeductions: number;
+  totalDeductions: number;
+  netAmount: number;
+  cppAdditionalContributionDeduction: number;
+  taxableIncomeForPayPeriod: number;
+  pensionableEarningsForPayPeriod: number;
+  insurableEarningsForPayPeriod: number;
+  ytdPensionableEarningsInput: number;
+  ytdCppContributionsInput: number;
+  ytdCpp2ContributionsInput: number;
+  ytdInsurableEarningsInput: number;
+  ytdEiPremiumsInput: number;
+  ytdPensionableEarningsTotal: number;
+  ytdCppContributionsTotal: number;
+  ytdCpp2ContributionsTotal: number;
+  ytdInsurableEarningsTotal: number;
+  ytdEiPremiumsTotal: number;
+  remittanceEmployeeCpp: number;
+  remittanceEmployeeCpp2: number;
+  remittanceEmployerCpp: number;
+  remittanceEmployerCpp2: number;
+  remittanceEmployeeEi: number;
+  remittanceEmployerEi: number;
+  remittanceTaxDeductions: number;
+  remittanceTotal: number;
+};
+
 const defaultDraft: PayRunDraft = {
   employeeId: "",
   payFrequency: "monthly",
@@ -1069,22 +1111,217 @@ const DEFAULT_REGULAR_HOURS_BY_FREQUENCY: Record<PayFrequency, number> = {
   weekly: 40,
   biweekly: 80,
   "semi-monthly": 86.67,
-  monthly: 173.33,
+  monthly: 165,
 };
 
 const getDefaultRegularHours = (frequency: PayFrequency) => DEFAULT_REGULAR_HOURS_BY_FREQUENCY[frequency];
 
-const normalizeBusinessNumber = (value: string) => {
-  const alphaNumeric = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  return alphaNumeric.slice(0, 15);
+const buildPdocReportMarkup = ({
+  employeeName,
+  employerName,
+  payFrequency,
+  datePaid,
+  province,
+  federalClaimAmount,
+  provincialClaimAmount,
+  salaryOrWagesIncome,
+  totalCashIncome,
+  federalTaxDeduction,
+  provincialTaxDeduction,
+  totalTaxDeductions,
+  cppDeductions,
+  cpp2Deductions,
+  eiDeductions,
+  totalDeductions,
+  netAmount,
+  cppAdditionalContributionDeduction,
+  taxableIncomeForPayPeriod,
+  pensionableEarningsForPayPeriod,
+  insurableEarningsForPayPeriod,
+  ytdPensionableEarningsInput,
+  ytdCppContributionsInput,
+  ytdCpp2ContributionsInput,
+  ytdInsurableEarningsInput,
+  ytdEiPremiumsInput,
+  ytdPensionableEarningsTotal,
+  ytdCppContributionsTotal,
+  ytdCpp2ContributionsTotal,
+  ytdInsurableEarningsTotal,
+  ytdEiPremiumsTotal,
+  remittanceEmployeeCpp,
+  remittanceEmployeeCpp2,
+  remittanceEmployerCpp,
+  remittanceEmployerCpp2,
+  remittanceEmployeeEi,
+  remittanceEmployerEi,
+  remittanceTaxDeductions,
+  remittanceTotal,
+}: PdocReportInput) => {
+  const paidDateLabel = datePaid || new Date().toISOString().slice(0, 10);
+  const frequencyLabel = getFrequencyLabel(payFrequency);
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PDOC Report - ${escapeHtml(employeeName)}</title>
+    <style>
+      @page { size: Letter portrait; margin: 0.55in; }
+      :root {
+        color-scheme: light;
+        font-family: Arial, Helvetica, sans-serif;
+        --ink: #141414;
+        --line: #2a2a2a;
+        --soft: #d6d6d6;
+        --muted: #555;
+        --wash: #f4f4f4;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: var(--ink); }
+      .page { width: 100%; break-after: page; }
+      .page:last-child { break-after: auto; }
+      h1 { margin: 0 0 8px; font-size: 20px; }
+      .subtitle { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+      .grid { border: 1px solid var(--line); margin-top: 10px; }
+      .grid table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      .grid td, .grid th { border-bottom: 1px solid var(--soft); padding: 7px 8px; font-size: 11px; vertical-align: top; }
+      .grid tr:last-child td { border-bottom: none; }
+      .grid td:first-child, .grid th:first-child { width: 70%; }
+      .grid td:last-child, .grid th:last-child { width: 30%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .grid th { text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--wash); border-bottom: 1px solid var(--line); }
+      .section-title { margin-top: 14px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+      .totals td { font-weight: 700; border-top: 1.5px solid var(--line); }
+      .small { margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.35; }
+      .footer { margin-top: 12px; color: var(--muted); font-size: 9px; display: flex; justify-content: space-between; }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <h1>Payroll Deductions Online Calculator</h1>
+      <p class="subtitle">Result</p>
+
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Employee's name</td><td>${escapeHtml(employeeName)}</td></tr>
+          <tr><td>Employer's name</td><td>${escapeHtml(employerName)}</td></tr>
+          <tr><td>Pay period frequency</td><td>${escapeHtml(`${frequencyLabel} (${payFrequency === "weekly" ? "52" : payFrequency === "biweekly" ? "26" : payFrequency === "semi-monthly" ? "24" : "12"} pay periods a year)`)}</td></tr>
+          <tr><td>Date the employee is paid</td><td>${escapeHtml(paidDateLabel)} (YYYY-MM-DD)</td></tr>
+          <tr><td>Province of employment</td><td>${escapeHtml(province)}</td></tr>
+          <tr><td>Federal amount from TD1</td><td>${escapeHtml(formatCurrency(federalClaimAmount))}</td></tr>
+          <tr><td>Provincial amount from TD1</td><td>${escapeHtml(formatCurrency(provincialClaimAmount))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Salary or wages income</td><td>${escapeHtml(formatCurrency(salaryOrWagesIncome))}</td></tr>
+          <tr><td>Total cash income</td><td>${escapeHtml(formatCurrency(totalCashIncome))}</td></tr>
+          <tr><td>Federal tax deduction</td><td>${escapeHtml(formatCurrency(federalTaxDeduction))}</td></tr>
+          <tr><td>Provincial tax deduction</td><td>${escapeHtml(formatCurrency(provincialTaxDeduction))}</td></tr>
+          <tr><td>Total tax deductions on income</td><td>${escapeHtml(formatCurrency(totalTaxDeductions))}</td></tr>
+          <tr><td>CPP deductions</td><td>${escapeHtml(formatCurrency(cppDeductions))}</td></tr>
+          <tr><td>CPP2 deductions</td><td>${escapeHtml(formatCurrency(cpp2Deductions))}</td></tr>
+          <tr><td>EI deductions</td><td>${escapeHtml(formatCurrency(eiDeductions))}</td></tr>
+          <tr class="totals"><td>Total deductions</td><td>${escapeHtml(formatCurrency(totalDeductions))}</td></tr>
+          <tr class="totals"><td>Net amount</td><td>${escapeHtml(formatCurrency(netAmount))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="section-title">Other Amounts</div>
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Deductions for CPP additional contribution</td><td>${escapeHtml(formatCurrency(cppAdditionalContributionDeduction))}</td></tr>
+          <tr><td>Taxable income for the pay period</td><td>${escapeHtml(formatCurrency(taxableIncomeForPayPeriod))}</td></tr>
+          <tr><td>Pensionable earnings for the pay period</td><td>${escapeHtml(formatCurrency(pensionableEarningsForPayPeriod))}</td></tr>
+          <tr><td>Insurable earnings for the pay period</td><td>${escapeHtml(formatCurrency(insurableEarningsForPayPeriod))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="section-title">Year-to-Date Amounts</div>
+      <div class="grid">
+        <table>
+          <thead><tr><th>Line</th><th>Inputted value / Total for this record</th></tr></thead>
+          <tbody>
+            <tr><td>Pensionable earnings</td><td>${escapeHtml(`${formatCurrency(ytdPensionableEarningsInput)} / ${formatCurrency(ytdPensionableEarningsTotal)}`)}</td></tr>
+            <tr><td>CPP contributions</td><td>${escapeHtml(`${formatCurrency(ytdCppContributionsInput)} / ${formatCurrency(ytdCppContributionsTotal)}`)}</td></tr>
+            <tr><td>CPP2 contributions</td><td>${escapeHtml(`${formatCurrency(ytdCpp2ContributionsInput)} / ${formatCurrency(ytdCpp2ContributionsTotal)}`)}</td></tr>
+            <tr><td>Insurable earnings</td><td>${escapeHtml(`${formatCurrency(ytdInsurableEarningsInput)} / ${formatCurrency(ytdInsurableEarningsTotal)}`)}</td></tr>
+            <tr><td>EI premiums</td><td>${escapeHtml(`${formatCurrency(ytdEiPremiumsInput)} / ${formatCurrency(ytdEiPremiumsTotal)}`)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        <span>Created by the Payroll Deductions Online Calculator</span>
+        <span>Page 1 of 2</span>
+      </div>
+    </main>
+
+    <main class="page">
+      <h1>Employer Remittance Summary</h1>
+      <p class="subtitle">Employee: ${escapeHtml(employeeName)} · Date paid: ${escapeHtml(paidDateLabel)} (YYYY-MM-DD)</p>
+
+      <div class="section-title">Canada Pension Plan (CPP)</div>
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Employee CPP contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployeeCpp))}</td></tr>
+          <tr><td>Employee CPP2 contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployeeCpp2))}</td></tr>
+          <tr><td>Employer CPP contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployerCpp))}</td></tr>
+          <tr><td>Employer CPP2 contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployerCpp2))}</td></tr>
+          <tr class="totals"><td>Subtotal of Canada Pension Plan (CPP)</td><td>${escapeHtml(formatCurrency(remittanceEmployeeCpp + remittanceEmployeeCpp2 + remittanceEmployerCpp + remittanceEmployerCpp2))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="section-title">Employment Insurance (EI)</div>
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Employee EI contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployeeEi))}</td></tr>
+          <tr><td>Employer EI contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployerEi))}</td></tr>
+          <tr class="totals"><td>Subtotal of Employment Insurance (EI)</td><td>${escapeHtml(formatCurrency(remittanceEmployeeEi + remittanceEmployerEi))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Tax deductions</td><td>${escapeHtml(formatCurrency(remittanceTaxDeductions))}</td></tr>
+          <tr class="totals"><td>For this calculation, remit this amount</td><td>${escapeHtml(formatCurrency(remittanceTotal))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <p class="small">
+        The printed calculations created by this PDOC-style report are an internal worksheet and not a legal statement of earnings.
+        Confirm all remittance and payroll filing amounts against CRA records before submitting.
+      </p>
+      <div class="footer">
+        <span>Created by the Payroll Deductions Online Calculator</span>
+        <span>Page 2 of 2</span>
+      </div>
+    </main>
+  </body>
+</html>`;
+};
+
+const printPdocReportWindow = (markup: string) => {
+  const printWindow = window.open("", "_blank", "width=1440,height=980");
+  if (!printWindow) {
+    throw new Error("The browser blocked the print window. Please allow pop-ups for this site.");
+  }
+  printWindow.document.write(markup);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.onload = () => {
+    printWindow.print();
+    printWindow.onafterprint = () => {
+      printWindow.close();
+    };
+  };
 };
 
 const buildPd7aReportMarkup = ({
   remitterName,
-  remitterBn,
+  grossPayroll,
+  employeeCount,
   periodStart,
   periodEnd,
-  dueDate,
   generatedAt,
   runCount,
   employeeCpp,
@@ -1094,149 +1331,95 @@ const buildPd7aReportMarkup = ({
   employeeEi,
   employerEi,
   incomeTax,
-  priorBalance,
-  amountPaid,
-  sourceSummary,
 }: Pd7aReportInput) => {
-  const periodLabel = formatPayPeriod(periodStart, periodEnd);
-  const generationDate = formatStatementDate(generatedAt);
+  const monthLabel = new Intl.DateTimeFormat("en-CA", { month: "short", year: "2-digit" }).format(new Date(periodEnd));
   const totalCpp = employeeCpp + employeeCpp2 + employerCpp + employerCpp2;
   const totalEi = employeeEi + employerEi;
-  const totalCurrentRemittance = totalCpp + totalEi + incomeTax;
-  const balanceForward = priorBalance - amountPaid;
-  const netRemittanceDue = totalCurrentRemittance + balanceForward;
-  const amountToRemit = netRemittanceDue > 0 ? netRemittanceDue : 0;
-  const creditBalance = netRemittanceDue < 0 ? Math.abs(netRemittanceDue) : 0;
-
-  const safeBn = normalizeBusinessNumber(remitterBn) || "BN not provided";
-  const safeRemitter = remitterName.trim() || "Payroll remitter";
-  const safeSourceSummary = sourceSummary.trim() || "CRA-style PD7A summary (generated in-app).";
+  const remittanceForPeriod = incomeTax + totalCpp + totalEi;
 
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>PD7A Report - ${escapeHtml(safeRemitter)}</title>
+    <title>PD7A Summary - ${escapeHtml(remitterName)}</title>
     <style>
-      @page { size: Letter portrait; margin: 0.45in; }
-      :root {
-        color-scheme: light;
-        font-family: Arial, Helvetica, sans-serif;
-        --ink: #141414;
-        --muted: #555;
-        --line: #262626;
-        --soft: #d9d9d9;
-        --wash: #f3f3f3;
-      }
+      @page { size: Letter portrait; margin: 0.5in; }
+      :root { font-family: Arial, Helvetica, sans-serif; color-scheme: light; --ink: #111; --muted: #5d5d5d; }
       * { box-sizing: border-box; }
-      body { margin: 0; padding: 14px; background: #ededed; color: var(--ink); }
-      .sheet { max-width: 8.1in; margin: 0 auto; background: white; border: 1px solid #c8c8c8; padding: 0.18in 0.2in 0.2in; }
-      .topline { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-      .topline h1 { margin: 0; font-size: 17px; letter-spacing: 0.03em; text-transform: uppercase; }
-      .topline p { margin: 4px 0 0; font-size: 10px; color: var(--muted); }
-      .stamp { text-align: right; font-size: 9px; color: var(--muted); }
-      .meta { margin-top: 10px; border: 1px solid var(--line); }
-      .meta table, .grid table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-      .meta td { border-bottom: 1px solid var(--line); padding: 6px 8px; font-size: 10px; vertical-align: top; }
-      .meta tr:last-child td { border-bottom: none; }
-      .meta td:first-child { width: 34%; font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--wash); font-weight: 700; }
-      .section { margin-top: 10px; border: 1px solid var(--line); }
-      .section h2 { margin: 0; padding: 7px 8px; border-bottom: 1px solid var(--line); background: var(--wash); font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; }
-      .grid td, .grid th { border-bottom: 1px solid var(--soft); padding: 6px 8px; font-size: 10px; }
-      .grid tr:last-child td { border-bottom: none; }
-      .grid th { text-align: left; font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; background: #fafafa; border-bottom: 1px solid var(--line); }
-      .grid td:nth-child(2), .grid th:nth-child(2) { text-align: right; width: 2.05in; white-space: nowrap; font-variant-numeric: tabular-nums; }
-      .grid tr.total td { font-weight: 700; border-top: 1.5px solid var(--line); border-bottom: 1.5px solid var(--line); }
-      .split { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-      .note { margin-top: 10px; font-size: 9px; color: var(--muted); line-height: 1.35; }
-      .voucher { margin-top: 12px; border: 1.5px dashed var(--line); padding: 8px; }
-      .voucher h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-      .voucher-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 11px; }
-      .voucher-row strong { font-size: 20px; white-space: nowrap; }
-      .tiny { margin-top: 6px; font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-      @media print {
-        body { background: white; padding: 0; }
-        .sheet { border: none; padding: 0; max-width: none; }
-      }
+      body { margin: 0; color: var(--ink); }
+      .sheet { max-width: 7.8in; margin: 0 auto; }
+      .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 14px; }
+      .title { font-weight: 700; font-size: 20px; margin: 0; }
+      .sub { font-size: 13px; margin: 2px 0 0; color: var(--muted); }
+      .meta { text-align: right; font-size: 12px; line-height: 1.35; }
+      .month { margin-top: 14px; font-size: 22px; font-weight: 700; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      td { padding: 6px 0; font-size: 15px; vertical-align: top; }
+      td:last-child { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .section { margin-top: 10px; font-size: 16px; font-weight: 700; }
+      .indent td:first-child { padding-left: 16px; }
+      .total td:first-child { font-weight: 700; }
+      .footer { margin-top: 16px; color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; }
     </style>
   </head>
   <body>
     <main class="sheet">
-      <section class="topline">
+      <div class="top">
         <div>
-          <h1>PD7A - Statement of Account for Current Source Deductions</h1>
-          <p>Regular and quarterly remitter format (generated from saved payroll runs)</p>
+          <h1 class="title">PD7A Summary</h1>
+          <p class="sub">${escapeHtml(remitterName)}</p>
         </div>
-        <div class="stamp">
-          <div>Generated: ${escapeHtml(generationDate)}</div>
-          <div>Report period: ${escapeHtml(periodLabel)}</div>
+        <div class="meta">
+          <div>${escapeHtml(formatStatementDate(generatedAt))}</div>
           <div>Runs included: ${escapeHtml(String(runCount))}</div>
         </div>
-      </section>
+      </div>
+      <div class="month">${escapeHtml(monthLabel)}</div>
 
-      <section class="meta">
-        <table><tbody>
-          <tr><td>Remitter name</td><td>${escapeHtml(safeRemitter)}</td></tr>
-          <tr><td>Payroll account number (BN)</td><td>${escapeHtml(safeBn)}</td></tr>
-          <tr><td>Remittance period</td><td>${escapeHtml(periodLabel)}</td></tr>
-          <tr><td>Remittance due date</td><td>${escapeHtml(formatStatementDate(dueDate))}</td></tr>
-          <tr><td>Tax table source</td><td>${escapeHtml(safeSourceSummary)}</td></tr>
-        </tbody></table>
-      </section>
+      <table>
+        <tbody>
+          <tr><td>Gross payroll for period</td><td>${escapeHtml(formatCurrency(grossPayroll))}</td></tr>
+          <tr><td>No. of employees paid in period</td><td>${escapeHtml(String(employeeCount || runCount))}</td></tr>
+        </tbody>
+      </table>
 
-      <section class="section grid">
-        <h2>Current source deductions</h2>
-        <table>
-          <thead><tr><th>Line item</th><th>Amount</th></tr></thead>
-          <tbody>
-            <tr><td>Employee CPP + CPP2 deductions</td><td>${escapeHtml(formatCurrency(employeeCpp + employeeCpp2))}</td></tr>
-            <tr><td>Employer CPP + CPP2 contributions</td><td>${escapeHtml(formatCurrency(employerCpp + employerCpp2))}</td></tr>
-            <tr><td>Employee EI deductions</td><td>${escapeHtml(formatCurrency(employeeEi))}</td></tr>
-            <tr><td>Employer EI contributions</td><td>${escapeHtml(formatCurrency(employerEi))}</td></tr>
-            <tr><td>Income tax deducted</td><td>${escapeHtml(formatCurrency(incomeTax))}</td></tr>
-            <tr class="total"><td>Total current remittance</td><td>${escapeHtml(formatCurrency(totalCurrentRemittance))}</td></tr>
-          </tbody>
-        </table>
-      </section>
+      <div class="section">Remittance for period</div>
+      <table>
+        <tbody>
+          <tr><td>Tax deductions</td><td>${escapeHtml(formatCurrency(incomeTax))}</td></tr>
+        </tbody>
+      </table>
 
-      <section class="split">
-        <div class="section grid">
-          <h2>Account balance movement</h2>
-          <table>
-            <thead><tr><th>Description</th><th>Amount</th></tr></thead>
-            <tbody>
-              <tr><td>Prior balance</td><td>${escapeHtml(formatCurrency(priorBalance))}</td></tr>
-              <tr><td>Amount already paid</td><td>${escapeHtml(formatCurrency(amountPaid))}</td></tr>
-              <tr><td>Balance forward</td><td>${escapeHtml(formatCurrency(balanceForward))}</td></tr>
-              <tr class="total"><td>Net remittance due</td><td>${escapeHtml(formatCurrency(netRemittanceDue))}</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="section grid">
-          <h2>Statutory subtotal check</h2>
-          <table>
-            <thead><tr><th>Subtotal</th><th>Amount</th></tr></thead>
-            <tbody>
-              <tr><td>Total CPP (employee + employer)</td><td>${escapeHtml(formatCurrency(totalCpp))}</td></tr>
-              <tr><td>Total EI (employee + employer)</td><td>${escapeHtml(formatCurrency(totalEi))}</td></tr>
-              <tr><td>Total income tax</td><td>${escapeHtml(formatCurrency(incomeTax))}</td></tr>
-              <tr class="total"><td>Current statutory total</td><td>${escapeHtml(formatCurrency(totalCurrentRemittance))}</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <div class="section">Total CPP contributions</div>
+      <table>
+        <tbody>
+          <tr class="indent"><td>CPP - Employee</td><td>${escapeHtml(formatCurrency(employeeCpp))}</td></tr>
+          <tr class="indent"><td>CPP - Company</td><td>${escapeHtml(formatCurrency(employerCpp))}</td></tr>
+          <tr class="indent"><td>Second CPP - Employee</td><td>${escapeHtml(formatCurrency(employeeCpp2))}</td></tr>
+          <tr class="indent"><td>Second CPP - Company</td><td>${escapeHtml(formatCurrency(employerCpp2))}</td></tr>
+          <tr class="total"><td>Total CPP contributions</td><td>${escapeHtml(formatCurrency(totalCpp))}</td></tr>
+        </tbody>
+      </table>
 
-      <section class="voucher">
-        <h3>Remittance voucher (summary)</h3>
-        <div class="voucher-row"><span>Amount to remit</span><strong>${escapeHtml(formatCurrency(amountToRemit))}</strong></div>
-        <div class="voucher-row"><span>Credit balance</span><strong>${escapeHtml(formatCurrency(creditBalance))}</strong></div>
-        <div class="tiny">For official filing and payment instructions, confirm details against CRA-issued PD7A / My Business Account.</div>
-      </section>
+      <div class="section">Total EI premiums</div>
+      <table>
+        <tbody>
+          <tr class="indent"><td>EI - Employee</td><td>${escapeHtml(formatCurrency(employeeEi))}</td></tr>
+          <tr class="indent"><td>EI - Company</td><td>${escapeHtml(formatCurrency(employerEi))}</td></tr>
+          <tr class="total"><td>Total EI premiums</td><td>${escapeHtml(formatCurrency(totalEi))}</td></tr>
+        </tbody>
+      </table>
 
-      <p class="note">
-        This report uses CRA PD7A-style sections (remitter identity, current source deductions, balance movement, and remittance voucher)
-        and is intended as an internal worksheet. Verify all figures and account details before submitting any remittance.
-      </p>
+      <table>
+        <tbody>
+          <tr class="total"><td>Remittance for period</td><td>${escapeHtml(formatCurrency(remittanceForPeriod))}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="footer">
+        <span>${escapeHtml(formatPayPeriod(periodStart, periodEnd))}</span>
+        <span>Page 1</span>
+      </div>
     </main>
   </body>
 </html>`;
@@ -2434,11 +2617,11 @@ function AppV2() {
     try {
       printPd7aReportWindow({
         remitterName: companyProfile.legalName || companyProfile.name || "Payroll remitter",
-        remitterBn: "BN-RP not set",
         periodStart,
         periodEnd,
-        dueDate: periodEnd,
         generatedAt: new Date().toISOString(),
+        grossPayroll: matchingRuns.reduce((sum, run) => sum + (run.grossPay ?? 0), 0),
+        employeeCount: new Set(matchingRuns.map((run) => run.employeeId)).size,
         runCount: matchingRuns.length,
         employeeCpp: totals.employeeCpp,
         employeeCpp2: totals.employeeCpp2,
@@ -2447,14 +2630,102 @@ function AppV2() {
         employeeEi: totals.employeeEi,
         employerEi: totals.employerEi,
         incomeTax: totals.incomeTax,
-        priorBalance: 0,
-        amountPaid: 0,
-        sourceSummary: activeTaxTable?.sourceSummary ?? "Generated from saved payroll runs.",
       });
 
       setStatusMessage(`Opened PD7A report for ${formatPayPeriod(periodStart, periodEnd)}.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not print the PD7A report.");
+    }
+  };
+
+  const printPdocReport = () => {
+    if (!selectedEmployee || !payroll) {
+      setStatusMessage("Preview a payroll run before printing the PDOC-style report.");
+      return;
+    }
+
+    try {
+      const ytd = previewYtd ?? {
+        regularHours: draft.regularHours,
+        overtimeHours: draft.overtimeHours,
+        bonusAmount: draft.bonusAmount,
+        taxableBenefits: draft.taxableBenefits,
+        grossRegular: payroll.grossRegular,
+        grossOvertime: payroll.grossOvertime,
+        vacationAccrual: payroll.vacationAccrual,
+        vacationPaid: payroll.vacationPaid,
+        vacationBalance: payroll.vacationAccrual - payroll.vacationPaid,
+        grossPay: payroll.grossPay,
+        rrspRppPrppContribution: payroll.rrspRppPrppContribution,
+        unionDues: payroll.unionDues,
+        cpp: payroll.cpp,
+        cpp2: payroll.cpp2,
+        ei: payroll.ei,
+        federalTax: payroll.federalTax,
+        provincialTax: payroll.provincialTax,
+        totalDeductions: payroll.totalDeductions,
+        netPay: payroll.netPay,
+        employerCpp: payroll.employerCpp,
+        employerCpp2: payroll.employerCpp2,
+        employerEi: payroll.employerEi,
+        employerCost: payroll.employerCost,
+      };
+
+      const totalTaxDeductions = payroll.federalTax + payroll.provincialTax;
+      const pensionableEarningsForPayPeriod = payroll.grossRegular + payroll.grossOvertime + draft.taxableBenefits + payroll.vacationPaid;
+      const insurableEarningsForPayPeriod = pensionableEarningsForPayPeriod;
+      const pdocMarkup = buildPdocReportMarkup({
+        employeeName: getDisplayName(selectedEmployee),
+        employerName: companyProfile.legalName || companyProfile.name || "Employer",
+        payFrequency: draft.payFrequency,
+        datePaid: draft.payPeriodEnd,
+        province: selectedEmployee.provinceOfEmployment || "ON",
+        federalClaimAmount: selectedEmployee.federalClaimAmount,
+        provincialClaimAmount: selectedEmployee.provincialClaimAmount,
+        salaryOrWagesIncome: payroll.grossRegular + payroll.grossOvertime,
+        totalCashIncome: payroll.grossPay,
+        federalTaxDeduction: payroll.federalTax,
+        provincialTaxDeduction: payroll.provincialTax,
+        totalTaxDeductions,
+        cppDeductions: payroll.cpp,
+        cpp2Deductions: payroll.cpp2,
+        eiDeductions: payroll.ei,
+        totalDeductions: payroll.totalDeductions,
+        netAmount: payroll.netPay,
+        cppAdditionalContributionDeduction: payroll.cpp2,
+        taxableIncomeForPayPeriod: Math.max(0, payroll.grossPay - payroll.rrspRppPrppContribution - payroll.unionDues - payroll.cpp2),
+        pensionableEarningsForPayPeriod,
+        insurableEarningsForPayPeriod,
+        ytdPensionableEarningsInput: Math.max(0, ytd.regularHours - draft.regularHours),
+        ytdCppContributionsInput: Math.max(0, ytd.cpp - payroll.cpp),
+        ytdCpp2ContributionsInput: Math.max(0, ytd.cpp2 - payroll.cpp2),
+        ytdInsurableEarningsInput: Math.max(0, ytd.grossPay - payroll.grossPay),
+        ytdEiPremiumsInput: Math.max(0, ytd.ei - payroll.ei),
+        ytdPensionableEarningsTotal: ytd.grossPay,
+        ytdCppContributionsTotal: ytd.cpp,
+        ytdCpp2ContributionsTotal: ytd.cpp2,
+        ytdInsurableEarningsTotal: ytd.grossPay,
+        ytdEiPremiumsTotal: ytd.ei,
+        remittanceEmployeeCpp: payroll.cpp,
+        remittanceEmployeeCpp2: payroll.cpp2,
+        remittanceEmployerCpp: payroll.employerCpp,
+        remittanceEmployerCpp2: payroll.employerCpp2,
+        remittanceEmployeeEi: payroll.ei,
+        remittanceEmployerEi: payroll.employerEi,
+        remittanceTaxDeductions: totalTaxDeductions,
+        remittanceTotal:
+          payroll.cpp
+          + payroll.cpp2
+          + payroll.employerCpp
+          + payroll.employerCpp2
+          + payroll.ei
+          + payroll.employerEi
+          + totalTaxDeductions,
+      });
+      printPdocReportWindow(pdocMarkup);
+      setStatusMessage(`Opened PDOC-style report for ${getDisplayName(selectedEmployee)}.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not print the PDOC-style report.");
     }
   };
 
@@ -2770,6 +3041,9 @@ function AppV2() {
             </button>
             <button className="secondary-button wide-button" type="button" onClick={printPd7aReport} disabled={recentPayRuns.length === 0}>
               Print PD7A report
+            </button>
+            <button className="secondary-button wide-button" type="button" onClick={printPdocReport} disabled={!selectedEmployee || !payroll}>
+              Print PDOC report
             </button>
             {editingPayRunId ? (
               <button className="secondary-button wide-button" type="button" onClick={resetPayRunForm}>

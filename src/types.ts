@@ -168,11 +168,11 @@ export interface PayStubTotals {
 
 export interface Pd7aReportInput {
   remitterName: string;
-  remitterBn: string;
   periodStart: string;
   periodEnd: string;
-  dueDate: string;
   generatedAt: string;
+  grossPayroll: number;
+  employeeCount: number;
   runCount: number;
   employeeCpp: number;
   employeeCpp2: number;
@@ -181,9 +181,6 @@ export interface Pd7aReportInput {
   employeeEi: number;
   employerEi: number;
   incomeTax: number;
-  priorBalance: number;
-  amountPaid: number;
-  sourceSummary: string;
 }
 
 export interface TaxTableSummary {
