@@ -1,4 +1,4 @@
-import { formatCurrency, getFrequencyLabel } from "./payroll.js";
+import { formatCurrency } from "./payroll.js";
 import type { Client, CompanyProfile, Employee, PayFrequency, PayRunDraft, PayStubTotals, TaxTableSummary } from "../types.js";
 
 type StubRow = {
@@ -104,7 +104,8 @@ export const buildClassicPayStubMarkup = ({
   const periodsPerYear =
     payFrequency === "weekly" ? 52 : payFrequency === "biweekly" ? 26 : payFrequency === "semi-monthly" ? 24 : 12;
   const salaryRate = employee?.annualSalary ? employee.annualSalary / periodsPerYear : 0;
-  const regularRate = employee?.employmentType === "salary" ? salaryRate : employee?.hourlyRate ?? 0;
+  const isSalary = employee?.employmentType === "salary";
+  const regularRate = isSalary ? salaryRate : employee?.hourlyRate ?? 0;
   const formatHoursClock = (value: number) => {
     const totalMinutes = Math.max(0, Math.round(value * 60));
     const hours = Math.floor(totalMinutes / 60);
@@ -119,7 +120,7 @@ export const buildClassicPayStubMarkup = ({
     `<tr>
       <td>${escapeHtml(employee?.employmentType === "salary" ? "Salary" : "Hourly Salary")}</td>
       <td>${escapeHtml(current.regularHours > 0 ? formatHoursClock(current.regularHours) : "")}</td>
-      <td>${escapeHtml(regularRate > 0 ? formatCurrency(regularRate) : "")}</td>
+      <td>${escapeHtml(!isSalary && regularRate > 0 ? formatCurrency(regularRate) : "")}</td>
       <td>${escapeHtml(blankMoneyIfZero(current.grossRegular))}</td>
       <td>${escapeHtml(blankMoneyIfZero(ytd?.grossRegular))}</td>
     </tr>`,
@@ -130,14 +131,17 @@ export const buildClassicPayStubMarkup = ({
       <td>${escapeHtml(blankMoneyIfZero(current.grossOvertime))}</td>
       <td>${escapeHtml(blankMoneyIfZero(ytd?.grossOvertime))}</td>
     </tr>`,
-    `<tr>
+  ];
+  if (!isSalary) {
+    earningsRows.push(`<tr>
       <td>VacPay-Paid Out</td>
       <td></td>
       <td></td>
       <td>${escapeHtml(blankMoneyIfZero(current.vacationPaid))}</td>
       <td>${escapeHtml(blankMoneyIfZero(ytd?.vacationPaid))}</td>
-    </tr>`,
-  ].join("");
+    </tr>`);
+  }
+  const earningsRowsMarkup = earningsRows.join("");
 
   return `<!doctype html>
 <html lang="en">
@@ -177,7 +181,7 @@ export const buildClassicPayStubMarkup = ({
       .summary td { border-bottom: 1px solid var(--soft); padding: 6px; font-size: 11px; }
       .summary tr:last-child td { border-bottom: none; font-weight: 700; font-size: 14px; }
       .summary td:nth-child(2), .summary td:nth-child(3) { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-      .two-col { margin-top: 8px; display: grid; grid-template-columns: 58% 42%; gap: 8px; align-items: start; }
+      .two-col { margin-top: 8px; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,0.88fr); gap: 8px; align-items: start; }
       .block { border: 1px solid var(--line); }
       .block-head { padding: 6px; border-bottom: 1px solid var(--line); text-transform: uppercase; letter-spacing: 0.05em; font-size: 8px; font-weight: 700; }
       .block table { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -185,6 +189,9 @@ export const buildClassicPayStubMarkup = ({
       .block tr:last-child td { border-bottom: none; }
       .block th { text-align: left; text-transform: uppercase; letter-spacing: 0.05em; font-size: 8px; background: #fafafa; }
       .block th:nth-child(n+2), .block td:nth-child(n+2) { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .withholdings-block th:nth-child(1), .withholdings-block td:nth-child(1) { width: 50%; white-space: normal; word-break: break-word; }
+      .withholdings-block th:nth-child(2), .withholdings-block td:nth-child(2) { width: 25%; }
+      .withholdings-block th:nth-child(3), .withholdings-block td:nth-child(3) { width: 25%; }
       @media print {
         body { background: white; padding: 0; }
         .sheet { border: none; padding: 0; max-width: none; }
@@ -203,10 +210,7 @@ export const buildClassicPayStubMarkup = ({
         <div class="mini-box">
           <table><tbody>
             <tr><td>Pay Date</td><td>${escapeHtml(payDate)}</td></tr>
-            <tr><td>Pay End Date</td><td>${escapeHtml(payEndDate)}</td></tr>
             <tr><td>Pay Period</td><td>${escapeHtml(`${payStartDate} - ${payEndDate}`)}</td></tr>
-            <tr><td>Frequency</td><td>${escapeHtml(getFrequencyLabel(payFrequency))}</td></tr>
-            <tr><td>Tax Table</td><td>${escapeHtml(taxTable?.label ?? "Saved payroll table")}</td></tr>
           </tbody></table>
         </div>
       </div>
@@ -240,10 +244,10 @@ export const buildClassicPayStubMarkup = ({
           <div class="block-head">Earnings and Hours</div>
           <table>
             <thead><tr><th>Earnings and Hours</th><th>Qty</th><th>Rate</th><th>Current</th><th>YTD Amount</th></tr></thead>
-            <tbody>${earningsRows}</tbody>
+            <tbody>${earningsRowsMarkup}</tbody>
           </table>
         </div>
-        <div class="block">
+        <div class="block withholdings-block">
           <div class="block-head">Withholdings</div>
           <table>
             <thead><tr><th>Withholdings</th><th>Current</th><th>YTD Amount</th></tr></thead>

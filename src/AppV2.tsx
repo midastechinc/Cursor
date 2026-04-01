@@ -2977,7 +2977,9 @@ function AppV2() {
                   { label: "Gross pay", current: payroll?.grossPay ?? 0, ytd: previewYtd.grossPay },
                   { label: "Net pay", current: payroll?.netPay ?? 0, ytd: previewYtd.netPay },
                   { label: "Income tax", current: (payroll?.federalTax ?? 0) + (payroll?.provincialTax ?? 0), ytd: previewYtd.federalTax + previewYtd.provincialTax },
-                  { label: "CPP / CPP2 / EI", current: (payroll?.cpp ?? 0) + (payroll?.cpp2 ?? 0) + (payroll?.ei ?? 0), ytd: previewYtd.cpp + previewYtd.cpp2 + previewYtd.ei },
+                  { label: "CPP", current: payroll?.cpp ?? 0, ytd: previewYtd.cpp },
+                  { label: "CPP2", current: payroll?.cpp2 ?? 0, ytd: previewYtd.cpp2 },
+                  { label: "EI", current: payroll?.ei ?? 0, ytd: previewYtd.ei },
                   { label: "Vacation accrued", current: payroll?.vacationAccrual ?? 0, ytd: previewYtd.vacationAccrual },
                   { label: "Vacation paid", current: payroll?.vacationPaid ?? 0, ytd: previewYtd.vacationPaid },
                   { label: "Vacation balance", current: previewYtd.vacationBalance - (payroll?.vacationAccrual ?? 0) + (payroll?.vacationPaid ?? 0), ytd: previewYtd.vacationBalance },
@@ -3021,7 +3023,7 @@ function AppV2() {
               </div>
 
               <div className="detail-card">
-                <h3>Employer burden</h3>
+                <h3>Employer Cost</h3>
                 <ul>
                   <li><span>Employer CPP</span><strong>{formatCurrency(payroll.employerCpp)}</strong></li>
                   <li><span>Employer CPP2</span><strong>{formatCurrency(payroll.employerCpp2)}</strong></li>
