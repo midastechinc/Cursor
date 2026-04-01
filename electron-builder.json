@@ -13,7 +13,7 @@
   "extraMetadata": {
     "main": "electron/main.cjs"
   },
-  "asar": true,
+  "asar": false,
   "win": {
     "signAndEditExecutable": false,
     "artifactName": "${productName}-Setup-${version}.${ext}",

@@ -80,6 +80,14 @@ function createWindow() {
   });
 
   mainWindow.loadURL(getApiUrl());
+  mainWindow.webContents.on("did-fail-load", async (_event, errorCode, errorDescription, validatedURL) => {
+    await dialog.showMessageBox({
+      type: "error",
+      title: "Midas Payroll could not load",
+      message: "The desktop window failed to load the app page.",
+      detail: `URL: ${validatedURL}\nError ${errorCode}: ${errorDescription}`,
+    });
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
