@@ -10,7 +10,7 @@ let apiPort = Number(process.env.PORT || "3001");
 const getApiUrl = () => `http://127.0.0.1:${apiPort}`;
 
 const getAppRoot = () => app.getAppPath();
-const getDistServerEntry = () => path.join(getAppRoot(), "dist-server", "index.js");
+const getDistServerEntry = () => path.join(getAppRoot(), "dist-server", "server", "index.js");
 const getStaticDir = () => path.join(getAppRoot(), "dist");
 
 function setupAutoUpdates() {
