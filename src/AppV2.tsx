@@ -70,48 +70,6 @@ type PdocExpectedValues = {
   netPay: string;
 };
 
-type PdocReportInput = {
-  employeeName: string;
-  employerName: string;
-  payFrequency: PayFrequency;
-  datePaid: string;
-  province: string;
-  federalClaimAmount: number;
-  provincialClaimAmount: number;
-  salaryOrWagesIncome: number;
-  totalCashIncome: number;
-  federalTaxDeduction: number;
-  provincialTaxDeduction: number;
-  totalTaxDeductions: number;
-  cppDeductions: number;
-  cpp2Deductions: number;
-  eiDeductions: number;
-  totalDeductions: number;
-  netAmount: number;
-  cppAdditionalContributionDeduction: number;
-  taxableIncomeForPayPeriod: number;
-  pensionableEarningsForPayPeriod: number;
-  insurableEarningsForPayPeriod: number;
-  ytdPensionableEarningsInput: number;
-  ytdCppContributionsInput: number;
-  ytdCpp2ContributionsInput: number;
-  ytdInsurableEarningsInput: number;
-  ytdEiPremiumsInput: number;
-  ytdPensionableEarningsTotal: number;
-  ytdCppContributionsTotal: number;
-  ytdCpp2ContributionsTotal: number;
-  ytdInsurableEarningsTotal: number;
-  ytdEiPremiumsTotal: number;
-  remittanceEmployeeCpp: number;
-  remittanceEmployeeCpp2: number;
-  remittanceEmployerCpp: number;
-  remittanceEmployerCpp2: number;
-  remittanceEmployeeEi: number;
-  remittanceEmployerEi: number;
-  remittanceTaxDeductions: number;
-  remittanceTotal: number;
-};
-
 const defaultDraft: PayRunDraft = {
   employeeId: "",
   payFrequency: "monthly",
@@ -159,6 +117,7 @@ const defaultAppSettings: AppSettings = {
     postalCode: { label: "Postal code", required: false },
     dateOfBirth: { label: "Date of birth", required: false },
     hireDate: { label: "Hire date", required: false },
+    terminationDate: { label: "Termination date", required: false },
     employmentType: { label: "Employment type", required: true },
     workerClassification: { label: "Worker classification", required: true },
     hourlyRate: { label: "Hourly rate", required: false },
@@ -274,6 +233,7 @@ const emptyEmployee: Omit<Employee, "id" | "provinceOfEmployment" | "active"> = 
   postalCode: "",
   dateOfBirth: "",
   hireDate: "",
+  terminationDate: "",
   employmentType: "hourly",
   workerClassification: "employee",
   hourlyRate: 24,
@@ -1115,206 +1075,6 @@ const DEFAULT_REGULAR_HOURS_BY_FREQUENCY: Record<PayFrequency, number> = {
 };
 
 const getDefaultRegularHours = (frequency: PayFrequency) => DEFAULT_REGULAR_HOURS_BY_FREQUENCY[frequency];
-
-const buildPdocReportMarkup = ({
-  employeeName,
-  employerName,
-  payFrequency,
-  datePaid,
-  province,
-  federalClaimAmount,
-  provincialClaimAmount,
-  salaryOrWagesIncome,
-  totalCashIncome,
-  federalTaxDeduction,
-  provincialTaxDeduction,
-  totalTaxDeductions,
-  cppDeductions,
-  cpp2Deductions,
-  eiDeductions,
-  totalDeductions,
-  netAmount,
-  cppAdditionalContributionDeduction,
-  taxableIncomeForPayPeriod,
-  pensionableEarningsForPayPeriod,
-  insurableEarningsForPayPeriod,
-  ytdPensionableEarningsInput,
-  ytdCppContributionsInput,
-  ytdCpp2ContributionsInput,
-  ytdInsurableEarningsInput,
-  ytdEiPremiumsInput,
-  ytdPensionableEarningsTotal,
-  ytdCppContributionsTotal,
-  ytdCpp2ContributionsTotal,
-  ytdInsurableEarningsTotal,
-  ytdEiPremiumsTotal,
-  remittanceEmployeeCpp,
-  remittanceEmployeeCpp2,
-  remittanceEmployerCpp,
-  remittanceEmployerCpp2,
-  remittanceEmployeeEi,
-  remittanceEmployerEi,
-  remittanceTaxDeductions,
-  remittanceTotal,
-}: PdocReportInput) => {
-  const paidDateLabel = datePaid || new Date().toISOString().slice(0, 10);
-  const frequencyLabel = getFrequencyLabel(payFrequency);
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>PDOC Report - ${escapeHtml(employeeName)}</title>
-    <style>
-      @page { size: Letter portrait; margin: 0.55in; }
-      :root {
-        color-scheme: light;
-        font-family: Arial, Helvetica, sans-serif;
-        --ink: #141414;
-        --line: #2a2a2a;
-        --soft: #d6d6d6;
-        --muted: #555;
-        --wash: #f4f4f4;
-      }
-      * { box-sizing: border-box; }
-      body { margin: 0; color: var(--ink); }
-      .page { width: 100%; break-after: page; }
-      .page:last-child { break-after: auto; }
-      h1 { margin: 0 0 8px; font-size: 20px; }
-      .subtitle { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
-      .grid { border: 1px solid var(--line); margin-top: 10px; }
-      .grid table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-      .grid td, .grid th { border-bottom: 1px solid var(--soft); padding: 7px 8px; font-size: 11px; vertical-align: top; }
-      .grid tr:last-child td { border-bottom: none; }
-      .grid td:first-child, .grid th:first-child { width: 70%; }
-      .grid td:last-child, .grid th:last-child { width: 30%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-      .grid th { text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--wash); border-bottom: 1px solid var(--line); }
-      .section-title { margin-top: 14px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
-      .totals td { font-weight: 700; border-top: 1.5px solid var(--line); }
-      .small { margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.35; }
-      .footer { margin-top: 12px; color: var(--muted); font-size: 9px; display: flex; justify-content: space-between; }
-    </style>
-  </head>
-  <body>
-    <main class="page">
-      <h1>Payroll Deductions Online Calculator</h1>
-      <p class="subtitle">Result</p>
-
-      <div class="grid">
-        <table><tbody>
-          <tr><td>Employee's name</td><td>${escapeHtml(employeeName)}</td></tr>
-          <tr><td>Employer's name</td><td>${escapeHtml(employerName)}</td></tr>
-          <tr><td>Pay period frequency</td><td>${escapeHtml(`${frequencyLabel} (${payFrequency === "weekly" ? "52" : payFrequency === "biweekly" ? "26" : payFrequency === "semi-monthly" ? "24" : "12"} pay periods a year)`)}</td></tr>
-          <tr><td>Date the employee is paid</td><td>${escapeHtml(paidDateLabel)} (YYYY-MM-DD)</td></tr>
-          <tr><td>Province of employment</td><td>${escapeHtml(province)}</td></tr>
-          <tr><td>Federal amount from TD1</td><td>${escapeHtml(formatCurrency(federalClaimAmount))}</td></tr>
-          <tr><td>Provincial amount from TD1</td><td>${escapeHtml(formatCurrency(provincialClaimAmount))}</td></tr>
-        </tbody></table>
-      </div>
-
-      <div class="grid">
-        <table><tbody>
-          <tr><td>Salary or wages income</td><td>${escapeHtml(formatCurrency(salaryOrWagesIncome))}</td></tr>
-          <tr><td>Total cash income</td><td>${escapeHtml(formatCurrency(totalCashIncome))}</td></tr>
-          <tr><td>Federal tax deduction</td><td>${escapeHtml(formatCurrency(federalTaxDeduction))}</td></tr>
-          <tr><td>Provincial tax deduction</td><td>${escapeHtml(formatCurrency(provincialTaxDeduction))}</td></tr>
-          <tr><td>Total tax deductions on income</td><td>${escapeHtml(formatCurrency(totalTaxDeductions))}</td></tr>
-          <tr><td>CPP deductions</td><td>${escapeHtml(formatCurrency(cppDeductions))}</td></tr>
-          <tr><td>CPP2 deductions</td><td>${escapeHtml(formatCurrency(cpp2Deductions))}</td></tr>
-          <tr><td>EI deductions</td><td>${escapeHtml(formatCurrency(eiDeductions))}</td></tr>
-          <tr class="totals"><td>Total deductions</td><td>${escapeHtml(formatCurrency(totalDeductions))}</td></tr>
-          <tr class="totals"><td>Net amount</td><td>${escapeHtml(formatCurrency(netAmount))}</td></tr>
-        </tbody></table>
-      </div>
-
-      <div class="section-title">Other Amounts</div>
-      <div class="grid">
-        <table><tbody>
-          <tr><td>Deductions for CPP additional contribution</td><td>${escapeHtml(formatCurrency(cppAdditionalContributionDeduction))}</td></tr>
-          <tr><td>Taxable income for the pay period</td><td>${escapeHtml(formatCurrency(taxableIncomeForPayPeriod))}</td></tr>
-          <tr><td>Pensionable earnings for the pay period</td><td>${escapeHtml(formatCurrency(pensionableEarningsForPayPeriod))}</td></tr>
-          <tr><td>Insurable earnings for the pay period</td><td>${escapeHtml(formatCurrency(insurableEarningsForPayPeriod))}</td></tr>
-        </tbody></table>
-      </div>
-
-      <div class="section-title">Year-to-Date Amounts</div>
-      <div class="grid">
-        <table>
-          <thead><tr><th>Line</th><th>Inputted value / Total for this record</th></tr></thead>
-          <tbody>
-            <tr><td>Pensionable earnings</td><td>${escapeHtml(`${formatCurrency(ytdPensionableEarningsInput)} / ${formatCurrency(ytdPensionableEarningsTotal)}`)}</td></tr>
-            <tr><td>CPP contributions</td><td>${escapeHtml(`${formatCurrency(ytdCppContributionsInput)} / ${formatCurrency(ytdCppContributionsTotal)}`)}</td></tr>
-            <tr><td>CPP2 contributions</td><td>${escapeHtml(`${formatCurrency(ytdCpp2ContributionsInput)} / ${formatCurrency(ytdCpp2ContributionsTotal)}`)}</td></tr>
-            <tr><td>Insurable earnings</td><td>${escapeHtml(`${formatCurrency(ytdInsurableEarningsInput)} / ${formatCurrency(ytdInsurableEarningsTotal)}`)}</td></tr>
-            <tr><td>EI premiums</td><td>${escapeHtml(`${formatCurrency(ytdEiPremiumsInput)} / ${formatCurrency(ytdEiPremiumsTotal)}`)}</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="footer">
-        <span>Created by the Payroll Deductions Online Calculator</span>
-        <span>Page 1 of 2</span>
-      </div>
-    </main>
-
-    <main class="page">
-      <h1>Employer Remittance Summary</h1>
-      <p class="subtitle">Employee: ${escapeHtml(employeeName)} · Date paid: ${escapeHtml(paidDateLabel)} (YYYY-MM-DD)</p>
-
-      <div class="section-title">Canada Pension Plan (CPP)</div>
-      <div class="grid">
-        <table><tbody>
-          <tr><td>Employee CPP contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployeeCpp))}</td></tr>
-          <tr><td>Employee CPP2 contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployeeCpp2))}</td></tr>
-          <tr><td>Employer CPP contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployerCpp))}</td></tr>
-          <tr><td>Employer CPP2 contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployerCpp2))}</td></tr>
-          <tr class="totals"><td>Subtotal of Canada Pension Plan (CPP)</td><td>${escapeHtml(formatCurrency(remittanceEmployeeCpp + remittanceEmployeeCpp2 + remittanceEmployerCpp + remittanceEmployerCpp2))}</td></tr>
-        </tbody></table>
-      </div>
-
-      <div class="section-title">Employment Insurance (EI)</div>
-      <div class="grid">
-        <table><tbody>
-          <tr><td>Employee EI contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployeeEi))}</td></tr>
-          <tr><td>Employer EI contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployerEi))}</td></tr>
-          <tr class="totals"><td>Subtotal of Employment Insurance (EI)</td><td>${escapeHtml(formatCurrency(remittanceEmployeeEi + remittanceEmployerEi))}</td></tr>
-        </tbody></table>
-      </div>
-
-      <div class="grid">
-        <table><tbody>
-          <tr><td>Tax deductions</td><td>${escapeHtml(formatCurrency(remittanceTaxDeductions))}</td></tr>
-          <tr class="totals"><td>For this calculation, remit this amount</td><td>${escapeHtml(formatCurrency(remittanceTotal))}</td></tr>
-        </tbody></table>
-      </div>
-
-      <p class="small">
-        The printed calculations created by this PDOC-style report are an internal worksheet and not a legal statement of earnings.
-        Confirm all remittance and payroll filing amounts against CRA records before submitting.
-      </p>
-      <div class="footer">
-        <span>Created by the Payroll Deductions Online Calculator</span>
-        <span>Page 2 of 2</span>
-      </div>
-    </main>
-  </body>
-</html>`;
-};
-
-const printPdocReportWindow = (markup: string) => {
-  const printWindow = window.open("", "_blank", "width=1440,height=980");
-  if (!printWindow) {
-    throw new Error("The browser blocked the print window. Please allow pop-ups for this site.");
-  }
-  printWindow.document.write(markup);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.onload = () => {
-    printWindow.print();
-    printWindow.onafterprint = () => {
-      printWindow.close();
-    };
-  };
-};
 
 const buildPd7aReportMarkup = ({
   remitterName,
@@ -2211,6 +1971,7 @@ function AppV2() {
       postalCode: employee.postalCode ?? "",
       dateOfBirth: employee.dateOfBirth ?? "",
       hireDate: employee.hireDate ?? "",
+      terminationDate: employee.terminationDate ?? "",
       employmentType: employee.employmentType,
       workerClassification: employee.workerClassification,
       hourlyRate: employee.hourlyRate ?? 24,
@@ -2638,97 +2399,6 @@ function AppV2() {
     }
   };
 
-  const printPdocReport = () => {
-    if (!selectedEmployee || !payroll) {
-      setStatusMessage("Preview a payroll run before printing the PDOC-style report.");
-      return;
-    }
-
-    try {
-      const ytd = previewYtd ?? {
-        regularHours: draft.regularHours,
-        overtimeHours: draft.overtimeHours,
-        bonusAmount: draft.bonusAmount,
-        taxableBenefits: draft.taxableBenefits,
-        grossRegular: payroll.grossRegular,
-        grossOvertime: payroll.grossOvertime,
-        vacationAccrual: payroll.vacationAccrual,
-        vacationPaid: payroll.vacationPaid,
-        vacationBalance: payroll.vacationAccrual - payroll.vacationPaid,
-        grossPay: payroll.grossPay,
-        rrspRppPrppContribution: payroll.rrspRppPrppContribution,
-        unionDues: payroll.unionDues,
-        cpp: payroll.cpp,
-        cpp2: payroll.cpp2,
-        ei: payroll.ei,
-        federalTax: payroll.federalTax,
-        provincialTax: payroll.provincialTax,
-        totalDeductions: payroll.totalDeductions,
-        netPay: payroll.netPay,
-        employerCpp: payroll.employerCpp,
-        employerCpp2: payroll.employerCpp2,
-        employerEi: payroll.employerEi,
-        employerCost: payroll.employerCost,
-      };
-
-      const totalTaxDeductions = payroll.federalTax + payroll.provincialTax;
-      const pensionableEarningsForPayPeriod = payroll.grossRegular + payroll.grossOvertime + draft.taxableBenefits + payroll.vacationPaid;
-      const insurableEarningsForPayPeriod = pensionableEarningsForPayPeriod;
-      const pdocMarkup = buildPdocReportMarkup({
-        employeeName: getDisplayName(selectedEmployee),
-        employerName: companyProfile.legalName || companyProfile.name || "Employer",
-        payFrequency: draft.payFrequency,
-        datePaid: draft.payPeriodEnd,
-        province: selectedEmployee.provinceOfEmployment || "ON",
-        federalClaimAmount: selectedEmployee.federalClaimAmount,
-        provincialClaimAmount: selectedEmployee.provincialClaimAmount,
-        salaryOrWagesIncome: payroll.grossRegular + payroll.grossOvertime,
-        totalCashIncome: payroll.grossPay,
-        federalTaxDeduction: payroll.federalTax,
-        provincialTaxDeduction: payroll.provincialTax,
-        totalTaxDeductions,
-        cppDeductions: payroll.cpp,
-        cpp2Deductions: payroll.cpp2,
-        eiDeductions: payroll.ei,
-        totalDeductions: payroll.totalDeductions,
-        netAmount: payroll.netPay,
-        cppAdditionalContributionDeduction: payroll.cpp2,
-        taxableIncomeForPayPeriod: Math.max(0, payroll.grossPay - payroll.rrspRppPrppContribution - payroll.unionDues - payroll.cpp2),
-        pensionableEarningsForPayPeriod,
-        insurableEarningsForPayPeriod,
-        ytdPensionableEarningsInput: Math.max(0, ytd.regularHours - draft.regularHours),
-        ytdCppContributionsInput: Math.max(0, ytd.cpp - payroll.cpp),
-        ytdCpp2ContributionsInput: Math.max(0, ytd.cpp2 - payroll.cpp2),
-        ytdInsurableEarningsInput: Math.max(0, ytd.grossPay - payroll.grossPay),
-        ytdEiPremiumsInput: Math.max(0, ytd.ei - payroll.ei),
-        ytdPensionableEarningsTotal: ytd.grossPay,
-        ytdCppContributionsTotal: ytd.cpp,
-        ytdCpp2ContributionsTotal: ytd.cpp2,
-        ytdInsurableEarningsTotal: ytd.grossPay,
-        ytdEiPremiumsTotal: ytd.ei,
-        remittanceEmployeeCpp: payroll.cpp,
-        remittanceEmployeeCpp2: payroll.cpp2,
-        remittanceEmployerCpp: payroll.employerCpp,
-        remittanceEmployerCpp2: payroll.employerCpp2,
-        remittanceEmployeeEi: payroll.ei,
-        remittanceEmployerEi: payroll.employerEi,
-        remittanceTaxDeductions: totalTaxDeductions,
-        remittanceTotal:
-          payroll.cpp
-          + payroll.cpp2
-          + payroll.employerCpp
-          + payroll.employerCpp2
-          + payroll.ei
-          + payroll.employerEi
-          + totalTaxDeductions,
-      });
-      printPdocReportWindow(pdocMarkup);
-      setStatusMessage(`Opened PDOC-style report for ${getDisplayName(selectedEmployee)}.`);
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Could not print the PDOC-style report.");
-    }
-  };
-
   return (
     <div className="app-shell">
       <div className="backdrop backdrop-left" />
@@ -3043,9 +2713,6 @@ function AppV2() {
             </button>
             <button className="secondary-button wide-button" type="button" onClick={printPd7aReport} disabled={recentPayRuns.length === 0}>
               Print PD7A report
-            </button>
-            <button className="secondary-button wide-button" type="button" onClick={printPdocReport} disabled={!selectedEmployee || !payroll}>
-              Print PDOC report
             </button>
             {editingPayRunId ? (
               <button className="secondary-button wide-button" type="button" onClick={resetPayRunForm}>
@@ -3420,6 +3087,7 @@ function AppV2() {
                                 ? `${formatCurrency(employee.annualSalary ?? 0)} / year`
                                 : `${formatCurrency(employee.hourlyRate ?? 0)} / hour`}
                             </small>
+                            <small>Termination: {employee.terminationDate || "Active"}</small>
                             <small>{(employee.attachments ?? []).length} documents</small>
                             <div className="employee-actions">
                               <button
@@ -3467,6 +3135,7 @@ function AppV2() {
                       </label>
                       <label className="compact-field">{renderFieldTitle(employeeFieldConfig, "employeeNumber", "Employee number")}<input value={newEmployee.employeeNumber} onChange={(event) => handleEmployeeInput("employeeNumber", event.target.value)} /></label>
                       <label className="compact-field">{renderFieldTitle(employeeFieldConfig, "hireDate", "Hire date")}<input type="date" value={newEmployee.hireDate} onChange={(event) => handleEmployeeInput("hireDate", event.target.value)} /></label>
+                      <label className="compact-field">{renderFieldTitle(employeeFieldConfig, "terminationDate", "Termination date")}<input type="date" value={newEmployee.terminationDate ?? ""} onChange={(event) => handleEmployeeInput("terminationDate", event.target.value)} /></label>
                       <label>{renderFieldTitle(employeeFieldConfig, "firstName", "First name")}<input value={newEmployee.firstName} onChange={(event) => handleEmployeeInput("firstName", event.target.value)} /></label>
                       <label>{renderFieldTitle(employeeFieldConfig, "lastName", "Last name")}<input value={newEmployee.lastName} onChange={(event) => handleEmployeeInput("lastName", event.target.value)} /></label>
                       <label>{renderFieldTitle(employeeFieldConfig, "role", "Job title")}<input value={newEmployee.role} onChange={(event) => handleEmployeeInput("role", event.target.value)} /></label>
@@ -3960,6 +3629,7 @@ function AppV2() {
                           ? `${formatCurrency(employee.annualSalary ?? 0)} / year`
                           : `${formatCurrency(employee.hourlyRate ?? 0)} / hour`}
                       </small>
+                      <small>Termination: {employee.terminationDate || "Active"}</small>
                     </div>
                   </article>
                 ))}

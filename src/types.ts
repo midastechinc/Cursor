@@ -84,6 +84,7 @@ export interface Employee {
   postalCode?: string;
   dateOfBirth?: string;
   hireDate?: string;
+  terminationDate?: string;
   employmentType: EmploymentType;
   workerClassification: WorkerClassification;
   hourlyRate?: number;
