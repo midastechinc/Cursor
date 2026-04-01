@@ -2,6 +2,8 @@
   "name": "ontario-payroll-v1",
   "private": true,
   "version": "0.1.0",
+  "description": "Desktop payroll application for Ontario payroll runs and compliance",
+  "author": "Midas Tech Inc.",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -14,10 +16,12 @@
     "desktop:dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\" \"npm:desktop:wait-and-open\"",
     "desktop:wait-and-open": "wait-on tcp:3001 http://127.0.0.1:5173 && electron .",
     "desktop:build": "npm run build && electron-builder --config electron-builder.json --win nsis --x64",
-    "desktop:build:dir": "npm run build && electron-builder --config electron-builder.json --win dir --x64"
+    "desktop:build:dir": "npm run build && electron-builder --config electron-builder.json --win dir --x64",
+    "desktop:publish": "npm run build && electron-builder --config electron-builder.json --win nsis --x64 --publish always"
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "electron-updater": "^6.8.3",
     "express": "^4.21.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

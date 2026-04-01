@@ -37,7 +37,23 @@ npm run desktop:dev
 
 This starts Vite + API + Electron together.
 
+## Auto-update setup (GitHub Releases)
+
+Auto-update is wired into the desktop app using `electron-updater`. To enable it:
+
+1. Create a GitHub token with `repo` scope.
+2. Set `GH_TOKEN` in your shell/CI.
+3. Build and publish from Windows:
+
+```bash
+npm install
+npm run desktop:publish
+```
+
+The app checks for updates on startup and every 6 hours. When an update is downloaded, users get a restart prompt.  
+User data remains intact because the SQLite file is outside the install directory.
+
 ## Notes
 
-- Auto-update service is not configured yet (no update server URL configured).
-- The installer/update foundation is ready; you can add publish config later (GitHub releases, S3, etc.) for one-click in-app updates.
+- Publishing must run from Windows for Windows installers.
+- This Linux cloud environment cannot complete Windows signing/build steps that require Wine.
