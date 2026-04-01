@@ -23,6 +23,14 @@ npm install
 npm run desktop:build
 ```
 
+If your machine blocks symbolic links during packaging (`winCodeSign` extraction errors), use:
+
+```bash
+npm run desktop:build:unsigned
+```
+
+That skips Windows code-signing/editing steps and still creates a working installer.
+
 Installer output:
 
 - `release/` folder

@@ -15,9 +15,9 @@
     "start:server": "node dist-server/index.js",
     "desktop:dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\" \"npm:desktop:wait-and-open\"",
     "desktop:wait-and-open": "wait-on tcp:3001 http://127.0.0.1:5173 && electron .",
-    "desktop:build": "npm run build && electron-builder --config electron-builder.json --win nsis --x64",
-    "desktop:build:dir": "npm run build && electron-builder --config electron-builder.json --win dir --x64",
-    "desktop:publish": "npm run build && electron-builder --config electron-builder.json --win nsis --x64 --publish always",
+    "desktop:build": "npm run build && electron-builder --config electron-builder.json --win nsis --x64 --config.win.signAndEditExecutable=false",
+    "desktop:build:dir": "npm run build && electron-builder --config electron-builder.json --win dir --x64 --config.win.signAndEditExecutable=false",
+    "desktop:publish": "npm run build && electron-builder --config electron-builder.json --win nsis --x64 --publish always --config.win.signAndEditExecutable=false",
     "release:desktop": "node scripts/release-desktop.mjs"
   },
   "dependencies": {

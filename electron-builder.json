@@ -15,6 +15,7 @@
   },
   "asar": true,
   "win": {
+    "signAndEditExecutable": false,
     "artifactName": "${productName}-Setup-${version}.${ext}",
     "target": [
       {
