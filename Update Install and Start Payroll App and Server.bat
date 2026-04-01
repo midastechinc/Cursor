@@ -128,6 +128,9 @@ start "Payroll API Server" cmd /k "cd /d ""%~dp0"" && npm run dev:server"
 echo Starting Payroll web app...
 start "Payroll Web App" cmd /k "cd /d ""%~dp0"" && npm run dev:client"
 
+echo Opening browser to frontend...
+start "" "http://localhost:5173"
+
 echo.
 echo Update + install + launch complete.
 if "%STASH_CREATED%"=="1" (
