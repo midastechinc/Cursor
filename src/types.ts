@@ -166,6 +166,23 @@ export interface PayStubTotals {
   employerCost: number;
 }
 
+export interface Pd7aReportInput {
+  remitterName: string;
+  periodStart: string;
+  periodEnd: string;
+  generatedAt: string;
+  grossPayroll: number;
+  employeeCount: number;
+  runCount: number;
+  employeeCpp: number;
+  employeeCpp2: number;
+  employerCpp: number;
+  employerCpp2: number;
+  employeeEi: number;
+  employerEi: number;
+  incomeTax: number;
+}
+
 export interface TaxTableSummary {
   taxYear: number;
   label: string;

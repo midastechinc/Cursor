@@ -17,6 +17,7 @@ import type {
   PayRunRecord,
   PayrollBreakdown,
   PayrollPreviewResponse,
+  Pd7aReportInput,
   PayStubTotals,
   TaxTableSummary,
   VacationHandling,
@@ -29,6 +30,19 @@ const cppStatusOptions: CppStatus[] = ["standard", "exempt-under-18", "exempt-70
 const eiStatusOptions: EiStatus[] = ["standard", "non-insurable-cra-ruling", "owner-related-pending-ruling", "self-employed-non-insurable"];
 type ViewMode = "payroll" | "admin" | "history";
 type AdminTab = "company" | "people" | "tables";
+type ClientFormValues = Omit<Client, "id" | "active">;
+type ClientDirectorySort = "name-asc" | "employees-desc";
+type ClientDeleteIntent = {
+  id: string;
+  name: string;
+  employeeCount: number;
+  payRunCount: number;
+};
+type EmployeeDeleteIntent = {
+  id: string;
+  name: string;
+  payRunCount: number;
+};
 type PdocCompareForm = {
   employmentType: Employee["employmentType"];
   payFrequency: PayFrequency;
@@ -56,6 +70,48 @@ type PdocExpectedValues = {
   netPay: string;
 };
 
+type PdocReportInput = {
+  employeeName: string;
+  employerName: string;
+  payFrequency: PayFrequency;
+  datePaid: string;
+  province: string;
+  federalClaimAmount: number;
+  provincialClaimAmount: number;
+  salaryOrWagesIncome: number;
+  totalCashIncome: number;
+  federalTaxDeduction: number;
+  provincialTaxDeduction: number;
+  totalTaxDeductions: number;
+  cppDeductions: number;
+  cpp2Deductions: number;
+  eiDeductions: number;
+  totalDeductions: number;
+  netAmount: number;
+  cppAdditionalContributionDeduction: number;
+  taxableIncomeForPayPeriod: number;
+  pensionableEarningsForPayPeriod: number;
+  insurableEarningsForPayPeriod: number;
+  ytdPensionableEarningsInput: number;
+  ytdCppContributionsInput: number;
+  ytdCpp2ContributionsInput: number;
+  ytdInsurableEarningsInput: number;
+  ytdEiPremiumsInput: number;
+  ytdPensionableEarningsTotal: number;
+  ytdCppContributionsTotal: number;
+  ytdCpp2ContributionsTotal: number;
+  ytdInsurableEarningsTotal: number;
+  ytdEiPremiumsTotal: number;
+  remittanceEmployeeCpp: number;
+  remittanceEmployeeCpp2: number;
+  remittanceEmployerCpp: number;
+  remittanceEmployerCpp2: number;
+  remittanceEmployeeEi: number;
+  remittanceEmployerEi: number;
+  remittanceTaxDeductions: number;
+  remittanceTotal: number;
+};
+
 const defaultDraft: PayRunDraft = {
   employeeId: "",
   payFrequency: "monthly",
@@ -66,7 +122,7 @@ const defaultDraft: PayRunDraft = {
   vacationHandling: "accrue",
   accrueVacation: true,
   vacationPayoutAmount: 0,
-  regularHours: 80,
+  regularHours: 173.33,
   overtimeHours: 0,
   bonusAmount: 0,
   taxableBenefits: 0,
@@ -183,6 +239,23 @@ const emptyClient: Omit<Client, "id" | "active"> = {
   province: "ON",
   postalCode: "",
 };
+
+const normalizeClientForm = (client?: Partial<ClientFormValues>): ClientFormValues => ({
+  name: client?.name ?? "",
+  legalName: client?.legalName ?? "",
+  contactName: client?.contactName ?? "",
+  email: client?.email ?? "",
+  phone: client?.phone ?? "",
+  logoUrl: client?.logoUrl ?? "",
+  addressLine1: client?.addressLine1 ?? "",
+  addressLine2: client?.addressLine2 ?? "",
+  city: client?.city ?? "",
+  province: client?.province ?? "ON",
+  postalCode: client?.postalCode ?? "",
+});
+
+const clientFormFieldKeys = Object.keys(emptyClient) as (keyof ClientFormValues)[];
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const emptyEmployee: Omit<Employee, "id" | "provinceOfEmployment" | "active"> = {
   clientId: "",
@@ -1034,11 +1107,378 @@ const parseExpectedValue = (value: string) => {
 const getDisplayName = (employee: Pick<Employee, "fullName" | "firstName" | "lastName">) =>
   employee.fullName || [employee.firstName, employee.lastName].filter(Boolean).join(" ").trim() || "Employee";
 
+const DEFAULT_REGULAR_HOURS_BY_FREQUENCY: Record<PayFrequency, number> = {
+  weekly: 40,
+  biweekly: 80,
+  "semi-monthly": 86.67,
+  monthly: 165,
+};
+
+const getDefaultRegularHours = (frequency: PayFrequency) => DEFAULT_REGULAR_HOURS_BY_FREQUENCY[frequency];
+
+const buildPdocReportMarkup = ({
+  employeeName,
+  employerName,
+  payFrequency,
+  datePaid,
+  province,
+  federalClaimAmount,
+  provincialClaimAmount,
+  salaryOrWagesIncome,
+  totalCashIncome,
+  federalTaxDeduction,
+  provincialTaxDeduction,
+  totalTaxDeductions,
+  cppDeductions,
+  cpp2Deductions,
+  eiDeductions,
+  totalDeductions,
+  netAmount,
+  cppAdditionalContributionDeduction,
+  taxableIncomeForPayPeriod,
+  pensionableEarningsForPayPeriod,
+  insurableEarningsForPayPeriod,
+  ytdPensionableEarningsInput,
+  ytdCppContributionsInput,
+  ytdCpp2ContributionsInput,
+  ytdInsurableEarningsInput,
+  ytdEiPremiumsInput,
+  ytdPensionableEarningsTotal,
+  ytdCppContributionsTotal,
+  ytdCpp2ContributionsTotal,
+  ytdInsurableEarningsTotal,
+  ytdEiPremiumsTotal,
+  remittanceEmployeeCpp,
+  remittanceEmployeeCpp2,
+  remittanceEmployerCpp,
+  remittanceEmployerCpp2,
+  remittanceEmployeeEi,
+  remittanceEmployerEi,
+  remittanceTaxDeductions,
+  remittanceTotal,
+}: PdocReportInput) => {
+  const paidDateLabel = datePaid || new Date().toISOString().slice(0, 10);
+  const frequencyLabel = getFrequencyLabel(payFrequency);
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PDOC Report - ${escapeHtml(employeeName)}</title>
+    <style>
+      @page { size: Letter portrait; margin: 0.55in; }
+      :root {
+        color-scheme: light;
+        font-family: Arial, Helvetica, sans-serif;
+        --ink: #141414;
+        --line: #2a2a2a;
+        --soft: #d6d6d6;
+        --muted: #555;
+        --wash: #f4f4f4;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: var(--ink); }
+      .page { width: 100%; break-after: page; }
+      .page:last-child { break-after: auto; }
+      h1 { margin: 0 0 8px; font-size: 20px; }
+      .subtitle { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+      .grid { border: 1px solid var(--line); margin-top: 10px; }
+      .grid table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      .grid td, .grid th { border-bottom: 1px solid var(--soft); padding: 7px 8px; font-size: 11px; vertical-align: top; }
+      .grid tr:last-child td { border-bottom: none; }
+      .grid td:first-child, .grid th:first-child { width: 70%; }
+      .grid td:last-child, .grid th:last-child { width: 30%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .grid th { text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--wash); border-bottom: 1px solid var(--line); }
+      .section-title { margin-top: 14px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+      .totals td { font-weight: 700; border-top: 1.5px solid var(--line); }
+      .small { margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.35; }
+      .footer { margin-top: 12px; color: var(--muted); font-size: 9px; display: flex; justify-content: space-between; }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <h1>Payroll Deductions Online Calculator</h1>
+      <p class="subtitle">Result</p>
+
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Employee's name</td><td>${escapeHtml(employeeName)}</td></tr>
+          <tr><td>Employer's name</td><td>${escapeHtml(employerName)}</td></tr>
+          <tr><td>Pay period frequency</td><td>${escapeHtml(`${frequencyLabel} (${payFrequency === "weekly" ? "52" : payFrequency === "biweekly" ? "26" : payFrequency === "semi-monthly" ? "24" : "12"} pay periods a year)`)}</td></tr>
+          <tr><td>Date the employee is paid</td><td>${escapeHtml(paidDateLabel)} (YYYY-MM-DD)</td></tr>
+          <tr><td>Province of employment</td><td>${escapeHtml(province)}</td></tr>
+          <tr><td>Federal amount from TD1</td><td>${escapeHtml(formatCurrency(federalClaimAmount))}</td></tr>
+          <tr><td>Provincial amount from TD1</td><td>${escapeHtml(formatCurrency(provincialClaimAmount))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Salary or wages income</td><td>${escapeHtml(formatCurrency(salaryOrWagesIncome))}</td></tr>
+          <tr><td>Total cash income</td><td>${escapeHtml(formatCurrency(totalCashIncome))}</td></tr>
+          <tr><td>Federal tax deduction</td><td>${escapeHtml(formatCurrency(federalTaxDeduction))}</td></tr>
+          <tr><td>Provincial tax deduction</td><td>${escapeHtml(formatCurrency(provincialTaxDeduction))}</td></tr>
+          <tr><td>Total tax deductions on income</td><td>${escapeHtml(formatCurrency(totalTaxDeductions))}</td></tr>
+          <tr><td>CPP deductions</td><td>${escapeHtml(formatCurrency(cppDeductions))}</td></tr>
+          <tr><td>CPP2 deductions</td><td>${escapeHtml(formatCurrency(cpp2Deductions))}</td></tr>
+          <tr><td>EI deductions</td><td>${escapeHtml(formatCurrency(eiDeductions))}</td></tr>
+          <tr class="totals"><td>Total deductions</td><td>${escapeHtml(formatCurrency(totalDeductions))}</td></tr>
+          <tr class="totals"><td>Net amount</td><td>${escapeHtml(formatCurrency(netAmount))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="section-title">Other Amounts</div>
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Deductions for CPP additional contribution</td><td>${escapeHtml(formatCurrency(cppAdditionalContributionDeduction))}</td></tr>
+          <tr><td>Taxable income for the pay period</td><td>${escapeHtml(formatCurrency(taxableIncomeForPayPeriod))}</td></tr>
+          <tr><td>Pensionable earnings for the pay period</td><td>${escapeHtml(formatCurrency(pensionableEarningsForPayPeriod))}</td></tr>
+          <tr><td>Insurable earnings for the pay period</td><td>${escapeHtml(formatCurrency(insurableEarningsForPayPeriod))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="section-title">Year-to-Date Amounts</div>
+      <div class="grid">
+        <table>
+          <thead><tr><th>Line</th><th>Inputted value / Total for this record</th></tr></thead>
+          <tbody>
+            <tr><td>Pensionable earnings</td><td>${escapeHtml(`${formatCurrency(ytdPensionableEarningsInput)} / ${formatCurrency(ytdPensionableEarningsTotal)}`)}</td></tr>
+            <tr><td>CPP contributions</td><td>${escapeHtml(`${formatCurrency(ytdCppContributionsInput)} / ${formatCurrency(ytdCppContributionsTotal)}`)}</td></tr>
+            <tr><td>CPP2 contributions</td><td>${escapeHtml(`${formatCurrency(ytdCpp2ContributionsInput)} / ${formatCurrency(ytdCpp2ContributionsTotal)}`)}</td></tr>
+            <tr><td>Insurable earnings</td><td>${escapeHtml(`${formatCurrency(ytdInsurableEarningsInput)} / ${formatCurrency(ytdInsurableEarningsTotal)}`)}</td></tr>
+            <tr><td>EI premiums</td><td>${escapeHtml(`${formatCurrency(ytdEiPremiumsInput)} / ${formatCurrency(ytdEiPremiumsTotal)}`)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        <span>Created by the Payroll Deductions Online Calculator</span>
+        <span>Page 1 of 2</span>
+      </div>
+    </main>
+
+    <main class="page">
+      <h1>Employer Remittance Summary</h1>
+      <p class="subtitle">Employee: ${escapeHtml(employeeName)} · Date paid: ${escapeHtml(paidDateLabel)} (YYYY-MM-DD)</p>
+
+      <div class="section-title">Canada Pension Plan (CPP)</div>
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Employee CPP contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployeeCpp))}</td></tr>
+          <tr><td>Employee CPP2 contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployeeCpp2))}</td></tr>
+          <tr><td>Employer CPP contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployerCpp))}</td></tr>
+          <tr><td>Employer CPP2 contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployerCpp2))}</td></tr>
+          <tr class="totals"><td>Subtotal of Canada Pension Plan (CPP)</td><td>${escapeHtml(formatCurrency(remittanceEmployeeCpp + remittanceEmployeeCpp2 + remittanceEmployerCpp + remittanceEmployerCpp2))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="section-title">Employment Insurance (EI)</div>
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Employee EI contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployeeEi))}</td></tr>
+          <tr><td>Employer EI contributions</td><td>${escapeHtml(formatCurrency(remittanceEmployerEi))}</td></tr>
+          <tr class="totals"><td>Subtotal of Employment Insurance (EI)</td><td>${escapeHtml(formatCurrency(remittanceEmployeeEi + remittanceEmployerEi))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="grid">
+        <table><tbody>
+          <tr><td>Tax deductions</td><td>${escapeHtml(formatCurrency(remittanceTaxDeductions))}</td></tr>
+          <tr class="totals"><td>For this calculation, remit this amount</td><td>${escapeHtml(formatCurrency(remittanceTotal))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <p class="small">
+        The printed calculations created by this PDOC-style report are an internal worksheet and not a legal statement of earnings.
+        Confirm all remittance and payroll filing amounts against CRA records before submitting.
+      </p>
+      <div class="footer">
+        <span>Created by the Payroll Deductions Online Calculator</span>
+        <span>Page 2 of 2</span>
+      </div>
+    </main>
+  </body>
+</html>`;
+};
+
+const printPdocReportWindow = (markup: string) => {
+  const printWindow = window.open("", "_blank", "width=1440,height=980");
+  if (!printWindow) {
+    throw new Error("The browser blocked the print window. Please allow pop-ups for this site.");
+  }
+  printWindow.document.write(markup);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.onload = () => {
+    printWindow.print();
+    printWindow.onafterprint = () => {
+      printWindow.close();
+    };
+  };
+};
+
+const buildPd7aReportMarkup = ({
+  remitterName,
+  grossPayroll,
+  employeeCount,
+  periodStart,
+  periodEnd,
+  generatedAt,
+  runCount,
+  employeeCpp,
+  employeeCpp2,
+  employerCpp,
+  employerCpp2,
+  employeeEi,
+  employerEi,
+  incomeTax,
+}: Pd7aReportInput) => {
+  const monthLabel = new Intl.DateTimeFormat("en-CA", { month: "short", year: "2-digit" }).format(new Date(periodEnd));
+  const totalCpp = employeeCpp + employeeCpp2 + employerCpp + employerCpp2;
+  const totalEi = employeeEi + employerEi;
+  const remittanceForPeriod = incomeTax + totalCpp + totalEi;
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PD7A Summary - ${escapeHtml(remitterName)}</title>
+    <style>
+      @page { size: Letter portrait; margin: 0.5in; }
+      :root { font-family: Arial, Helvetica, sans-serif; color-scheme: light; --ink: #111; --muted: #5d5d5d; }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: var(--ink); }
+      .sheet { max-width: 7.8in; margin: 0 auto; }
+      .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 14px; }
+      .title { font-weight: 700; font-size: 20px; margin: 0; }
+      .sub { font-size: 13px; margin: 2px 0 0; color: var(--muted); }
+      .meta { text-align: right; font-size: 12px; line-height: 1.35; }
+      .month { margin-top: 14px; font-size: 22px; font-weight: 700; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      td { padding: 6px 0; font-size: 15px; vertical-align: top; }
+      td:last-child { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .section { margin-top: 10px; font-size: 16px; font-weight: 700; }
+      .indent td:first-child { padding-left: 16px; }
+      .total td:first-child { font-weight: 700; }
+      .footer { margin-top: 16px; color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; }
+    </style>
+  </head>
+  <body>
+    <main class="sheet">
+      <div class="top">
+        <div>
+          <h1 class="title">PD7A Summary</h1>
+          <p class="sub">${escapeHtml(remitterName)}</p>
+        </div>
+        <div class="meta">
+          <div>${escapeHtml(formatStatementDate(generatedAt))}</div>
+          <div>Runs included: ${escapeHtml(String(runCount))}</div>
+        </div>
+      </div>
+      <div class="month">${escapeHtml(monthLabel)}</div>
+
+      <table>
+        <tbody>
+          <tr><td>Gross payroll for period</td><td>${escapeHtml(formatCurrency(grossPayroll))}</td></tr>
+          <tr><td>No. of employees paid in period</td><td>${escapeHtml(String(employeeCount || runCount))}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="section">Remittance for period</div>
+      <table>
+        <tbody>
+          <tr><td>Tax deductions</td><td>${escapeHtml(formatCurrency(incomeTax))}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="section">Total CPP contributions</div>
+      <table>
+        <tbody>
+          <tr class="indent"><td>CPP - Employee</td><td>${escapeHtml(formatCurrency(employeeCpp))}</td></tr>
+          <tr class="indent"><td>CPP - Company</td><td>${escapeHtml(formatCurrency(employerCpp))}</td></tr>
+          <tr class="indent"><td>Second CPP - Employee</td><td>${escapeHtml(formatCurrency(employeeCpp2))}</td></tr>
+          <tr class="indent"><td>Second CPP - Company</td><td>${escapeHtml(formatCurrency(employerCpp2))}</td></tr>
+          <tr class="total"><td>Total CPP contributions</td><td>${escapeHtml(formatCurrency(totalCpp))}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="section">Total EI premiums</div>
+      <table>
+        <tbody>
+          <tr class="indent"><td>EI - Employee</td><td>${escapeHtml(formatCurrency(employeeEi))}</td></tr>
+          <tr class="indent"><td>EI - Company</td><td>${escapeHtml(formatCurrency(employerEi))}</td></tr>
+          <tr class="total"><td>Total EI premiums</td><td>${escapeHtml(formatCurrency(totalEi))}</td></tr>
+        </tbody>
+      </table>
+
+      <table>
+        <tbody>
+          <tr class="total"><td>Remittance for period</td><td>${escapeHtml(formatCurrency(remittanceForPeriod))}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="footer">
+        <span>${escapeHtml(formatPayPeriod(periodStart, periodEnd))}</span>
+        <span>Page 1</span>
+      </div>
+    </main>
+  </body>
+</html>`;
+};
+
+const printPd7aReportWindow = (input: Pd7aReportInput) => {
+  const printWindow = window.open("", "_blank", "width=1440,height=980");
+  if (!printWindow) {
+    throw new Error("The browser blocked the print window. Please allow pop-ups for this site.");
+  }
+
+  printWindow.document.write(buildPd7aReportMarkup(input));
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.onload = () => {
+    printWindow.print();
+    printWindow.onafterprint = () => {
+      printWindow.close();
+    };
+  };
+};
+
 const getFieldLabel = (config: Record<string, { label: string; required: boolean }>, key: string, fallback: string) =>
   config[key]?.label || fallback;
 
 const renderFieldTitle = (config: Record<string, { label: string; required: boolean }>, key: string, fallback: string) =>
   `${getFieldLabel(config, key, fallback)}${config[key]?.required ? " *" : ""}`;
+
+const looksLikeHttpUrl = (value: string) =>
+  /^(https?:\/\/)/i.test(value.trim());
+
+const looksLikePostalCode = (value: string) =>
+  /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/.test(value.trim());
+
+const formatPhonePlaceholder = "(555) 123-4567";
+const formatPostalCodePlaceholder = "A1A 1A1";
+const httpUrlPattern = /^https?:\/\/\S+$/i;
+const postalCodePattern = /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/;
+
+const isValidEmail = (value: string) => {
+  if (!value.trim()) {
+    return true;
+  }
+  return emailPattern.test(value.trim());
+};
+
+const isValidHttpUrl = (value: string) => {
+  if (!value.trim()) {
+    return true;
+  }
+  return httpUrlPattern.test(value.trim());
+};
+
+const isValidPostalCode = (value: string) => {
+  if (!value.trim()) {
+    return true;
+  }
+  return postalCodePattern.test(value.trim());
+};
 
 function AppV2() {
   const [viewMode, setViewMode] = useState<ViewMode>("payroll");
@@ -1055,8 +1495,16 @@ function AppV2() {
   const [editingPayRunId, setEditingPayRunId] = useState<string | null>(null);
   const [newClient, setNewClient] = useState(emptyClient);
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
+  const [clientSearchQuery, setClientSearchQuery] = useState("");
+  const [clientDirectorySort, setClientDirectorySort] = useState<ClientDirectorySort>("name-asc");
+  const [openClientActionId, setOpenClientActionId] = useState<string | null>(null);
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
+  const [openEmployeeActionId, setOpenEmployeeActionId] = useState<string | null>(null);
+  const [pendingClientDeleteTarget, setPendingClientDeleteTarget] = useState<ClientDeleteIntent | null>(null);
+  const [pendingEmployeeDeleteTarget, setPendingEmployeeDeleteTarget] = useState<EmployeeDeleteIntent | null>(null);
+  const [isDeletingClient, setIsDeletingClient] = useState(false);
+  const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
   const [activeTaxTable, setActiveTaxTable] = useState<TaxTableSummary | null>(null);
   const [showTaxTableWorkflow, setShowTaxTableWorkflow] = useState(false);
   const [pdocCompareForm, setPdocCompareForm] = useState<PdocCompareForm>(defaultPdocCompareForm);
@@ -1068,6 +1516,10 @@ function AppV2() {
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Connecting payroll studio...");
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const clientMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const employeeMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const clientMenuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const employeeMenuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   useEffect(() => {
     let active = true;
@@ -1127,7 +1579,8 @@ function AppV2() {
     () => activeEmployees.filter((employee) => employee.clientId === (selectedClient?.id ?? selectedClientId)),
     [activeEmployees, selectedClient, selectedClientId],
   );
-  const selectedEmployee = clientEmployees.find((employee) => employee.id === draft.employeeId) ?? clientEmployees[0];
+  const selectableEmployees = clientEmployees.length > 0 ? clientEmployees : activeEmployees;
+  const selectedEmployee = selectableEmployees.find((employee) => employee.id === draft.employeeId) ?? selectableEmployees[0];
   const calculatedVacationPayout = useMemo(() => {
     if (!selectedEmployee) {
       return 0;
@@ -1137,11 +1590,27 @@ function AppV2() {
   }, [draft, selectedEmployee]);
 
   useEffect(() => {
-    if (!selectedClient) {
+    if (!selectedClient || editingEmployeeId) {
       return;
     }
 
-    setNewEmployee((current) => (editingEmployeeId ? current : { ...current, clientId: selectedClient.id }));
+    setNewEmployee((current) => {
+      // Never override an in-progress add form that already has user-entered data.
+      const hasTypedData = Boolean(
+        current.firstName.trim()
+        || current.lastName.trim()
+        || current.role.trim()
+        || (current.email ?? "").trim()
+        || (current.phone ?? "").trim()
+        || (current.attachments ?? []).length > 0,
+      );
+
+      if (hasTypedData) {
+        return current;
+      }
+
+      return { ...current, clientId: selectedClient.id };
+    });
     setDraft((current) => {
       const employeeStillMatchesClient = activeEmployees.some(
         (employee) => employee.id === current.employeeId && employee.clientId === selectedClient.id,
@@ -1151,9 +1620,19 @@ function AppV2() {
         return current;
       }
 
+      const nextEmployeeForClient = activeEmployees.find((employee) => employee.clientId === selectedClient.id)?.id;
+      if (nextEmployeeForClient) {
+        return {
+          ...current,
+          employeeId: nextEmployeeForClient,
+        };
+      }
+
+      // Keep a valid fallback when the selected client has no employees yet.
+      const currentEmployeeIsStillActive = activeEmployees.some((employee) => employee.id === current.employeeId);
       return {
         ...current,
-        employeeId: activeEmployees.find((employee) => employee.clientId === selectedClient.id)?.id ?? "",
+        employeeId: currentEmployeeIsStillActive ? current.employeeId : (activeEmployees[0]?.id ?? ""),
       };
     });
   }, [activeEmployees, editingEmployeeId, selectedClient]);
@@ -1343,9 +1822,105 @@ function AppV2() {
   const payrollFieldConfig = appSettings.payrollFormFields ?? defaultAppSettings.payrollFormFields;
   const employeeFieldConfig = appSettings.employeeFormFields ?? defaultAppSettings.employeeFormFields;
   const clientFieldConfig = appSettings.clientFormFields ?? defaultAppSettings.clientFormFields;
+  const filteredClients = useMemo(() => {
+    const query = clientSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return activeClients;
+    }
 
+    return activeClients.filter((client) =>
+      [client.name, client.legalName, client.contactName, client.email, client.phone, client.city]
+        .some((value) => value.toLowerCase().includes(query)));
+  }, [activeClients, clientSearchQuery]);
+  const sortedClients = useMemo(() => {
+    const clientsToSort = [...filteredClients];
+    if (clientDirectorySort === "employees-desc") {
+      return clientsToSort.sort((left, right) => {
+        const leftCount = employees.filter((employee) => employee.clientId === left.id && employee.active).length;
+        const rightCount = employees.filter((employee) => employee.clientId === right.id && employee.active).length;
+        if (leftCount === rightCount) {
+          return left.name.localeCompare(right.name);
+        }
+        return rightCount - leftCount;
+      });
+    }
+
+    return clientsToSort.sort((left, right) => left.name.localeCompare(right.name));
+  }, [clientDirectorySort, employees, filteredClients]);
+  const selectedClientEmployeeCount = useMemo(
+    () => (selectedClient ? employees.filter((employee) => employee.active && employee.clientId === selectedClient.id).length : 0),
+    [employees, selectedClient],
+  );
+  const pendingClientDeleteEmployeeCount = pendingClientDeleteTarget?.employeeCount ?? 0;
+  const pendingClientDeleteRunCount = pendingClientDeleteTarget?.payRunCount ?? 0;
+  const pendingEmployeeDeleteRunCount = pendingEmployeeDeleteTarget?.payRunCount ?? 0;
+  const editingClient = useMemo(
+    () => (editingClientId ? clients.find((client) => client.id === editingClientId) ?? null : null),
+    [clients, editingClientId],
+  );
+  const baselineClientForm = useMemo(
+    () => normalizeClientForm(editingClient ?? undefined),
+    [editingClient],
+  );
+  const currentClientForm = useMemo(
+    () => normalizeClientForm(newClient),
+    [newClient],
+  );
+  const clientFormHasChanges = useMemo(
+    () => clientFormFieldKeys.some((key) => currentClientForm[key].trim() !== baselineClientForm[key].trim()),
+    [baselineClientForm, currentClientForm],
+  );
+  const clientValidation = useMemo(() => {
+    const errors: Partial<Record<keyof ClientFormValues, string>> = {};
+    if (clientFieldConfig.name.required && !currentClientForm.name.trim()) {
+      errors.name = `${clientFieldConfig.name.label} is required.`;
+    }
+    if (currentClientForm.email.trim() && !isValidEmail(currentClientForm.email)) {
+      errors.email = "Enter a valid email address.";
+    }
+    if (currentClientForm.logoUrl.trim() && !isValidHttpUrl(currentClientForm.logoUrl)) {
+      errors.logoUrl = "Use a full URL starting with http:// or https://.";
+    }
+    if (currentClientForm.postalCode.trim() && !isValidPostalCode(currentClientForm.postalCode)) {
+      errors.postalCode = "Use a valid Canadian postal code format (A1A 1A1).";
+    }
+
+    return {
+      errors,
+      isValid: Object.keys(errors).length === 0,
+    };
+  }, [clientFieldConfig.name.label, clientFieldConfig.name.required, currentClientForm]);
+  const clientFieldErrors = clientValidation.errors;
+  const clientFormCanSave = clientValidation.isValid;
   const handleDraftChange = <K extends keyof PayRunDraft>(key: K, value: PayRunDraft[K]) => {
-    setDraft((current) => ({ ...current, [key]: value }));
+    setDraft((current) => {
+      if (key === "payFrequency") {
+        const nextFrequency = value as PayFrequency;
+        return {
+          ...current,
+          payFrequency: nextFrequency,
+          regularHours: getDefaultRegularHours(nextFrequency),
+        };
+      }
+
+      return { ...current, [key]: value };
+    });
+  };
+
+  const handlePayFrequencyChange = (frequency: PayFrequency) => {
+    handleDraftChange("payFrequency", frequency);
+  };
+
+  const handleDraftEmployeeChange = (employeeId: string) => {
+    const employee = activeEmployees.find((item) => item.id === employeeId);
+    if (!employee) {
+      handleDraftChange("employeeId", employeeId);
+      return;
+    }
+
+    // Keep client and employee selectors in sync even if client filter was stale.
+    setSelectedClientId(employee.clientId);
+    setDraft((current) => ({ ...current, employeeId }));
   };
 
   const handleVacationModeChange = (mode: VacationHandling) => {
@@ -1737,6 +2312,40 @@ function AppV2() {
     }
   };
 
+  const requestClientDelete = (clientId: string) => {
+    const client = clients.find((item) => item.id === clientId);
+    if (!client) {
+      return;
+    }
+
+    const employeeCount = employees.filter((employee) => employee.clientId === clientId && employee.active).length;
+    const payRunCount = recentPayRuns.filter((run) => run.clientId === clientId).length;
+    setPendingClientDeleteTarget({
+      id: client.id,
+      name: client.name,
+      employeeCount,
+      payRunCount,
+    });
+  };
+
+  const cancelClientDelete = () => {
+    setPendingClientDeleteTarget(null);
+  };
+
+  const confirmClientDelete = async () => {
+    if (!pendingClientDeleteTarget) {
+      return;
+    }
+
+    setIsDeletingClient(true);
+    try {
+      await removeClient(pendingClientDeleteTarget.id);
+      setPendingClientDeleteTarget(null);
+    } finally {
+      setIsDeletingClient(false);
+    }
+  };
+
   const removeEmployee = async (employeeId: string) => {
     const employee = employees.find((item) => item.id === employeeId);
     if (!employee) {
@@ -1760,6 +2369,38 @@ function AppV2() {
       setStatusMessage(`Employee removed: ${employee.fullName}`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not delete employee.");
+    }
+  };
+
+  const requestEmployeeDelete = (employeeId: string) => {
+    const employee = employees.find((item) => item.id === employeeId);
+    if (!employee) {
+      return;
+    }
+
+    const payRunCount = recentPayRuns.filter((run) => run.employeeId === employeeId).length;
+    setPendingEmployeeDeleteTarget({
+      id: employee.id,
+      name: getDisplayName(employee),
+      payRunCount,
+    });
+  };
+
+  const cancelEmployeeDelete = () => {
+    setPendingEmployeeDeleteTarget(null);
+  };
+
+  const confirmEmployeeDelete = async () => {
+    if (!pendingEmployeeDeleteTarget) {
+      return;
+    }
+
+    setIsDeletingEmployee(true);
+    try {
+      await removeEmployee(pendingEmployeeDeleteTarget.id);
+      setPendingEmployeeDeleteTarget(null);
+    } finally {
+      setIsDeletingEmployee(false);
     }
   };
 
@@ -1929,6 +2570,165 @@ function AppV2() {
     }
   };
 
+  const printPd7aReport = () => {
+    const periodStart = draft.payPeriodStart;
+    const periodEnd = draft.payPeriodEnd;
+    if (!periodStart || !periodEnd) {
+      setStatusMessage("Set the pay period start and end dates before printing PD7A.");
+      return;
+    }
+
+    const matchingRuns = recentPayRuns
+      .filter((run) => run.payPeriodStart >= periodStart && run.payPeriodEnd <= periodEnd)
+      .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+
+    if (matchingRuns.length === 0) {
+      setStatusMessage("No saved pay runs were found for the selected period. Save at least one run first.");
+      return;
+    }
+
+    const totals = matchingRuns.reduce(
+      (accumulator, run) => {
+        const breakdown = run.payStub?.breakdown;
+        if (!breakdown) {
+          return accumulator;
+        }
+
+        accumulator.employeeCpp += breakdown.cpp;
+        accumulator.employeeCpp2 += breakdown.cpp2;
+        accumulator.employerCpp += breakdown.employerCpp;
+        accumulator.employerCpp2 += breakdown.employerCpp2;
+        accumulator.employeeEi += breakdown.ei;
+        accumulator.employerEi += breakdown.employerEi;
+        accumulator.incomeTax += breakdown.federalTax + breakdown.provincialTax;
+        return accumulator;
+      },
+      {
+        employeeCpp: 0,
+        employeeCpp2: 0,
+        employerCpp: 0,
+        employerCpp2: 0,
+        employeeEi: 0,
+        employerEi: 0,
+        incomeTax: 0,
+      },
+    );
+
+    try {
+      printPd7aReportWindow({
+        remitterName: companyProfile.legalName || companyProfile.name || "Payroll remitter",
+        periodStart,
+        periodEnd,
+        generatedAt: new Date().toISOString(),
+        grossPayroll: matchingRuns.reduce((sum, run) => sum + (run.grossPay ?? 0), 0),
+        employeeCount: new Set(matchingRuns.map((run) => run.employeeId)).size,
+        runCount: matchingRuns.length,
+        employeeCpp: totals.employeeCpp,
+        employeeCpp2: totals.employeeCpp2,
+        employerCpp: totals.employerCpp,
+        employerCpp2: totals.employerCpp2,
+        employeeEi: totals.employeeEi,
+        employerEi: totals.employerEi,
+        incomeTax: totals.incomeTax,
+      });
+
+      setStatusMessage(`Opened PD7A report for ${formatPayPeriod(periodStart, periodEnd)}.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not print the PD7A report.");
+    }
+  };
+
+  const printPdocReport = () => {
+    if (!selectedEmployee || !payroll) {
+      setStatusMessage("Preview a payroll run before printing the PDOC-style report.");
+      return;
+    }
+
+    try {
+      const ytd = previewYtd ?? {
+        regularHours: draft.regularHours,
+        overtimeHours: draft.overtimeHours,
+        bonusAmount: draft.bonusAmount,
+        taxableBenefits: draft.taxableBenefits,
+        grossRegular: payroll.grossRegular,
+        grossOvertime: payroll.grossOvertime,
+        vacationAccrual: payroll.vacationAccrual,
+        vacationPaid: payroll.vacationPaid,
+        vacationBalance: payroll.vacationAccrual - payroll.vacationPaid,
+        grossPay: payroll.grossPay,
+        rrspRppPrppContribution: payroll.rrspRppPrppContribution,
+        unionDues: payroll.unionDues,
+        cpp: payroll.cpp,
+        cpp2: payroll.cpp2,
+        ei: payroll.ei,
+        federalTax: payroll.federalTax,
+        provincialTax: payroll.provincialTax,
+        totalDeductions: payroll.totalDeductions,
+        netPay: payroll.netPay,
+        employerCpp: payroll.employerCpp,
+        employerCpp2: payroll.employerCpp2,
+        employerEi: payroll.employerEi,
+        employerCost: payroll.employerCost,
+      };
+
+      const totalTaxDeductions = payroll.federalTax + payroll.provincialTax;
+      const pensionableEarningsForPayPeriod = payroll.grossRegular + payroll.grossOvertime + draft.taxableBenefits + payroll.vacationPaid;
+      const insurableEarningsForPayPeriod = pensionableEarningsForPayPeriod;
+      const pdocMarkup = buildPdocReportMarkup({
+        employeeName: getDisplayName(selectedEmployee),
+        employerName: companyProfile.legalName || companyProfile.name || "Employer",
+        payFrequency: draft.payFrequency,
+        datePaid: draft.payPeriodEnd,
+        province: selectedEmployee.provinceOfEmployment || "ON",
+        federalClaimAmount: selectedEmployee.federalClaimAmount,
+        provincialClaimAmount: selectedEmployee.provincialClaimAmount,
+        salaryOrWagesIncome: payroll.grossRegular + payroll.grossOvertime,
+        totalCashIncome: payroll.grossPay,
+        federalTaxDeduction: payroll.federalTax,
+        provincialTaxDeduction: payroll.provincialTax,
+        totalTaxDeductions,
+        cppDeductions: payroll.cpp,
+        cpp2Deductions: payroll.cpp2,
+        eiDeductions: payroll.ei,
+        totalDeductions: payroll.totalDeductions,
+        netAmount: payroll.netPay,
+        cppAdditionalContributionDeduction: payroll.cpp2,
+        taxableIncomeForPayPeriod: Math.max(0, payroll.grossPay - payroll.rrspRppPrppContribution - payroll.unionDues - payroll.cpp2),
+        pensionableEarningsForPayPeriod,
+        insurableEarningsForPayPeriod,
+        ytdPensionableEarningsInput: Math.max(0, ytd.regularHours - draft.regularHours),
+        ytdCppContributionsInput: Math.max(0, ytd.cpp - payroll.cpp),
+        ytdCpp2ContributionsInput: Math.max(0, ytd.cpp2 - payroll.cpp2),
+        ytdInsurableEarningsInput: Math.max(0, ytd.grossPay - payroll.grossPay),
+        ytdEiPremiumsInput: Math.max(0, ytd.ei - payroll.ei),
+        ytdPensionableEarningsTotal: ytd.grossPay,
+        ytdCppContributionsTotal: ytd.cpp,
+        ytdCpp2ContributionsTotal: ytd.cpp2,
+        ytdInsurableEarningsTotal: ytd.grossPay,
+        ytdEiPremiumsTotal: ytd.ei,
+        remittanceEmployeeCpp: payroll.cpp,
+        remittanceEmployeeCpp2: payroll.cpp2,
+        remittanceEmployerCpp: payroll.employerCpp,
+        remittanceEmployerCpp2: payroll.employerCpp2,
+        remittanceEmployeeEi: payroll.ei,
+        remittanceEmployerEi: payroll.employerEi,
+        remittanceTaxDeductions: totalTaxDeductions,
+        remittanceTotal:
+          payroll.cpp
+          + payroll.cpp2
+          + payroll.employerCpp
+          + payroll.employerCpp2
+          + payroll.ei
+          + payroll.employerEi
+          + totalTaxDeductions,
+      });
+      printPdocReportWindow(pdocMarkup);
+      setStatusMessage(`Opened PDOC-style report for ${getDisplayName(selectedEmployee)}.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not print the PDOC-style report.");
+    }
+  };
+
   return (
     <div className="app-shell">
       <div className="backdrop backdrop-left" />
@@ -2018,18 +2818,21 @@ function AppV2() {
 
             <label className="span-2">
               {payrollFieldConfig.employeeId.label}
-              <select value={draft.employeeId} onChange={(event) => handleDraftChange("employeeId", event.target.value)} disabled={loading || clientEmployees.length === 0}>
-                {clientEmployees.map((employee) => (
+              <select value={draft.employeeId} onChange={(event) => handleDraftEmployeeChange(event.target.value)} disabled={loading || selectableEmployees.length === 0}>
+                {selectableEmployees.map((employee) => (
                   <option key={employee.id} value={employee.id}>
                     {getDisplayName(employee)} - {employee.role}
                   </option>
                 ))}
               </select>
+              {clientEmployees.length === 0 && activeEmployees.length > 0 ? (
+                <small>No employees are assigned to this client yet. Showing all active employees.</small>
+              ) : null}
             </label>
 
             <label className="pay-frequency-field">
               {payrollFieldConfig.payFrequency.label}
-              <select value={draft.payFrequency} onChange={(event) => handleDraftChange("payFrequency", event.target.value as PayFrequency)}>
+              <select value={draft.payFrequency} onChange={(event) => handlePayFrequencyChange(event.target.value as PayFrequency)}>
                 {payFrequencyOptions.map((frequency) => (
                   <option key={frequency} value={frequency}>
                     {getFrequencyLabel(frequency)}
@@ -2174,7 +2977,9 @@ function AppV2() {
                   { label: "Gross pay", current: payroll?.grossPay ?? 0, ytd: previewYtd.grossPay },
                   { label: "Net pay", current: payroll?.netPay ?? 0, ytd: previewYtd.netPay },
                   { label: "Income tax", current: (payroll?.federalTax ?? 0) + (payroll?.provincialTax ?? 0), ytd: previewYtd.federalTax + previewYtd.provincialTax },
-                  { label: "CPP / CPP2 / EI", current: (payroll?.cpp ?? 0) + (payroll?.cpp2 ?? 0) + (payroll?.ei ?? 0), ytd: previewYtd.cpp + previewYtd.cpp2 + previewYtd.ei },
+                  { label: "CPP", current: payroll?.cpp ?? 0, ytd: previewYtd.cpp },
+                  { label: "CPP2", current: payroll?.cpp2 ?? 0, ytd: previewYtd.cpp2 },
+                  { label: "EI", current: payroll?.ei ?? 0, ytd: previewYtd.ei },
                   { label: "Vacation accrued", current: payroll?.vacationAccrual ?? 0, ytd: previewYtd.vacationAccrual },
                   { label: "Vacation paid", current: payroll?.vacationPaid ?? 0, ytd: previewYtd.vacationPaid },
                   { label: "Vacation balance", current: previewYtd.vacationBalance - (payroll?.vacationAccrual ?? 0) + (payroll?.vacationPaid ?? 0), ytd: previewYtd.vacationBalance },
@@ -2218,7 +3023,7 @@ function AppV2() {
               </div>
 
               <div className="detail-card">
-                <h3>Employer burden</h3>
+                <h3>Employer Cost</h3>
                 <ul>
                   <li><span>Employer CPP</span><strong>{formatCurrency(payroll.employerCpp)}</strong></li>
                   <li><span>Employer CPP2</span><strong>{formatCurrency(payroll.employerCpp2)}</strong></li>
@@ -2235,6 +3040,12 @@ function AppV2() {
             </button>
             <button className="secondary-button wide-button" type="button" onClick={printCurrentPayStub} disabled={!selectedEmployee || !payroll}>
               Print current pay stub
+            </button>
+            <button className="secondary-button wide-button" type="button" onClick={printPd7aReport} disabled={recentPayRuns.length === 0}>
+              Print PD7A report
+            </button>
+            <button className="secondary-button wide-button" type="button" onClick={printPdocReport} disabled={!selectedEmployee || !payroll}>
+              Print PDOC report
             </button>
             {editingPayRunId ? (
               <button className="secondary-button wide-button" type="button" onClick={resetPayRunForm}>
@@ -2339,57 +3150,254 @@ function AppV2() {
 
               {adminTab === "people" ? (
                 <>
-                  <div className="detail-card">
-                    <h3>{editingClientId ? "Edit client company" : "Client settings"}</h3>
-                    <p className="admin-copy">Keep client companies separate so each one can hold its own employees and payroll history.</p>
-                    <div className="mini-form-grid admin-form-grid">
-                      <label>{renderFieldTitle(clientFieldConfig, "name", "Client company")}<input value={newClient.name} onChange={(event) => handleClientInput("name", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "legalName", "Legal name")}<input value={newClient.legalName} onChange={(event) => handleClientInput("legalName", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "contactName", "Contact name")}<input value={newClient.contactName} onChange={(event) => handleClientInput("contactName", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "email", "Email")}<input value={newClient.email} onChange={(event) => handleClientInput("email", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "phone", "Phone")}<input value={newClient.phone} onChange={(event) => handleClientInput("phone", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "logoUrl", "Logo URL")}<input value={newClient.logoUrl} onChange={(event) => handleClientInput("logoUrl", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "addressLine1", "Address line 1")}<input value={newClient.addressLine1} onChange={(event) => handleClientInput("addressLine1", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "addressLine2", "Address line 2")}<input value={newClient.addressLine2} onChange={(event) => handleClientInput("addressLine2", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "city", "City")}<input value={newClient.city} onChange={(event) => handleClientInput("city", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "province", "Province")}<input value={newClient.province} onChange={(event) => handleClientInput("province", event.target.value)} /></label>
-                      <label>{renderFieldTitle(clientFieldConfig, "postalCode", "Postal code")}<input value={newClient.postalCode} onChange={(event) => handleClientInput("postalCode", event.target.value)} /></label>
-                    </div>
-                    <button className="primary-button" type="button" onClick={saveClient} disabled={isSavingClient}>
-                      {isSavingClient ? "Saving client..." : editingClientId ? "Save client changes" : "Add client"}
-                    </button>
-                    {editingClientId ? (
-                      <button className="secondary-button wide-button" type="button" onClick={resetClientForm}>
-                        Cancel client edit
-                      </button>
-                    ) : null}
-                  </div>
+                  <div className="client-settings-layout">
+                    <aside className="detail-card client-directory-card">
+                      <div className="panel-heading compact">
+                        <div>
+                          <span className="section-tag">Clients</span>
+                          <h3>Client directory</h3>
+                        </div>
+                        <span className="client-directory-count">{activeClients.length}</span>
+                      </div>
 
-                  <div className="detail-card admin-list-card">
-                    <h3>Client directory</h3>
-                    <div className="employee-list">
-                      {activeClients.map((client) => (
-                        <article key={client.id} className="employee-card">
+                      <label className="compact-field">
+                        Search clients
+                        <input
+                          type="search"
+                          placeholder="Search by name, contact, city, email..."
+                          value={clientSearchQuery}
+                          onChange={(event) => setClientSearchQuery(event.target.value)}
+                        />
+                      </label>
+
+                      <div className="client-directory-list">
+                        {filteredClients.map((client) => {
+                          const isSelected = selectedClient?.id === client.id;
+                          const employeeCount = employees.filter(
+                            (employee) => employee.clientId === client.id && employee.active,
+                          ).length;
+
+                          return (
+                            <article key={client.id} className={`client-directory-item${isSelected ? " active" : ""}`}>
+                              <button
+                                className="client-directory-main"
+                                type="button"
+                                onClick={() => setSelectedClientId(client.id)}
+                              >
+                                <span className="client-directory-initials">
+                                  {(client.name || "Client").slice(0, 2).toUpperCase()}
+                                </span>
+                                <span className="client-directory-copy">
+                                  <strong>{client.name}</strong>
+                                  <small>{client.contactName || client.legalName || "Client company"}</small>
+                                  <small>{employeeCount} employees</small>
+                                </span>
+                              </button>
+                              <div className="client-directory-actions">
+                                <button
+                                  className="secondary-button icon-button"
+                                  type="button"
+                                  aria-label={`Client actions for ${client.name}`}
+                                  onClick={() => setOpenClientActionId((current) => (current === client.id ? null : client.id))}
+                                >
+                                  ⋯
+                                </button>
+                                {openClientActionId === client.id ? (
+                                  <div className="row-action-menu">
+                                    <button className="secondary-button" type="button" onClick={() => {
+                                      setSelectedClientId(client.id);
+                                      setOpenClientActionId(null);
+                                    }}>
+                                      Open
+                                    </button>
+                                    <button className="secondary-button" type="button" onClick={() => {
+                                      startEditingClient(client);
+                                      setOpenClientActionId(null);
+                                    }}>
+                                      Edit
+                                    </button>
+                                    <button className="danger-button" type="button" onClick={() => {
+                                      requestClientDelete(client.id);
+                                      setOpenClientActionId(null);
+                                    }}>
+                                      Delete
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </div>
+                            </article>
+                          );
+                        })}
+                        {filteredClients.length === 0 ? (
+                          <p className="admin-copy no-margin">No clients match this search yet.</p>
+                        ) : null}
+                      </div>
+                    </aside>
+
+                    <div className="client-settings-detail">
+                      <div className="detail-card client-profile-card">
+                        <div className="client-profile-mark">
+                          {(selectedClient?.name || newClient.name || "CL").slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="client-profile-copy">
+                          <span className="section-tag">Selected client</span>
+                          <h3>{selectedClient?.name || "No client selected"}</h3>
+                          <p className="admin-copy">
+                            {selectedClient
+                              ? `Managing ${selectedClientEmployeeCount} employee profiles for this client.`
+                              : "Create your first client to start organizing employees and pay run history."}
+                          </p>
+                          <div className="client-profile-meta">
+                            <span>{selectedClient?.contactName || "No contact set"}</span>
+                            <span>{selectedClient?.email || "No email set"}</span>
+                            <span>{selectedClient?.city || "No city set"}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="detail-card">
+                        <div className="client-form-head">
                           <div>
-                            <strong>{client.name}</strong>
-                            <span>{client.contactName || client.legalName || "Client company"}</span>
+                            <h3>{editingClientId ? "Edit client company" : "Client settings"}</h3>
+                            <p className="admin-copy">Keep client companies separate so each one can hold its own employees and payroll history.</p>
                           </div>
-                          <div className="employee-side">
-                            <small>{employees.filter((employee) => employee.clientId === client.id && employee.active).length} employees</small>
-                            <div className="employee-actions">
-                              <button className="secondary-button" type="button" onClick={() => startEditingClient(client)}>
-                                Edit
-                              </button>
-                              <button className="secondary-button" type="button" onClick={() => setSelectedClientId(client.id)}>
-                                Open
-                              </button>
-                              <button className="danger-button" type="button" onClick={() => removeClient(client.id)}>
-                                Delete
-                              </button>
+                          {clientFormHasChanges ? <span className="draft-pill">Unsaved changes</span> : null}
+                        </div>
+
+                        <div className="client-form-sections">
+                          <section className="client-form-section">
+                            <h4>Company basics</h4>
+                            <div className="mini-form-grid admin-form-grid">
+                              <label className={clientFieldErrors.name ? "field-error" : undefined}>
+                                {renderFieldTitle(clientFieldConfig, "name", "Client company")}
+                                <input
+                                  value={newClient.name}
+                                  placeholder="Acme Manufacturing Ltd."
+                                  aria-invalid={Boolean(clientFieldErrors.name)}
+                                  onChange={(event) => handleClientInput("name", event.target.value)}
+                                />
+                                {clientFieldErrors.name ? <small className="field-error-text">{clientFieldErrors.name}</small> : null}
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "legalName", "Legal name")}
+                                <input
+                                  value={newClient.legalName}
+                                  placeholder="Acme Manufacturing Limited"
+                                  onChange={(event) => handleClientInput("legalName", event.target.value)}
+                                />
+                              </label>
+                              <label className={clientFieldErrors.logoUrl ? "field-error" : undefined}>
+                                {renderFieldTitle(clientFieldConfig, "logoUrl", "Logo URL")}
+                                <input
+                                  value={newClient.logoUrl}
+                                  placeholder="https://example.com/logo.png"
+                                  aria-invalid={Boolean(clientFieldErrors.logoUrl)}
+                                  onChange={(event) => handleClientInput("logoUrl", event.target.value)}
+                                />
+                                {clientFieldErrors.logoUrl
+                                  ? <small className="field-error-text">{clientFieldErrors.logoUrl}</small>
+                                  : <small>Optional. Use a full URL starting with http:// or https://.</small>}
+                              </label>
                             </div>
-                          </div>
-                        </article>
-                      ))}
+                          </section>
+
+                          <section className="client-form-section">
+                            <h4>Primary contact</h4>
+                            <div className="mini-form-grid admin-form-grid">
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "contactName", "Contact name")}
+                                <input
+                                  value={newClient.contactName}
+                                  placeholder="Jane Doe"
+                                  onChange={(event) => handleClientInput("contactName", event.target.value)}
+                                />
+                              </label>
+                              <label className={clientFieldErrors.email ? "field-error" : undefined}>
+                                {renderFieldTitle(clientFieldConfig, "email", "Email")}
+                                <input
+                                  value={newClient.email}
+                                  type="email"
+                                  placeholder="payroll@acme.ca"
+                                  aria-invalid={Boolean(clientFieldErrors.email)}
+                                  onChange={(event) => handleClientInput("email", event.target.value)}
+                                />
+                                {clientFieldErrors.email ? <small className="field-error-text">{clientFieldErrors.email}</small> : null}
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "phone", "Phone")}
+                                <input
+                                  value={newClient.phone}
+                                  placeholder="+1 416 555 0182"
+                                  onChange={(event) => handleClientInput("phone", event.target.value)}
+                                />
+                              </label>
+                            </div>
+                          </section>
+
+                          <section className="client-form-section">
+                            <h4>Address</h4>
+                            <div className="mini-form-grid admin-form-grid">
+                              <label className="span-2">
+                                {renderFieldTitle(clientFieldConfig, "addressLine1", "Address line 1")}
+                                <input
+                                  value={newClient.addressLine1}
+                                  placeholder="123 Front Street West"
+                                  onChange={(event) => handleClientInput("addressLine1", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "addressLine2", "Address line 2")}
+                                <input
+                                  value={newClient.addressLine2}
+                                  placeholder="Suite 400"
+                                  onChange={(event) => handleClientInput("addressLine2", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "city", "City")}
+                                <input
+                                  value={newClient.city}
+                                  placeholder="Toronto"
+                                  onChange={(event) => handleClientInput("city", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                {renderFieldTitle(clientFieldConfig, "province", "Province")}
+                                <input
+                                  value={newClient.province}
+                                  placeholder="ON"
+                                  onChange={(event) => handleClientInput("province", event.target.value)}
+                                />
+                              </label>
+                              <label className={clientFieldErrors.postalCode ? "field-error" : undefined}>
+                                {renderFieldTitle(clientFieldConfig, "postalCode", "Postal code")}
+                                <input
+                                  value={newClient.postalCode}
+                                  placeholder="A1A 1A1"
+                                  aria-invalid={Boolean(clientFieldErrors.postalCode)}
+                                  onChange={(event) => handleClientInput("postalCode", event.target.value)}
+                                />
+                                {clientFieldErrors.postalCode ? <small className="field-error-text">{clientFieldErrors.postalCode}</small> : null}
+                              </label>
+                            </div>
+                          </section>
+                        </div>
+
+                        <div className="client-action-bar">
+                          <button className="primary-button" type="button" onClick={saveClient} disabled={isSavingClient || !clientFormCanSave}>
+                            {isSavingClient ? "Saving client..." : editingClientId ? "Save client changes" : "Add client"}
+                          </button>
+                          {editingClientId ? (
+                            <button className="secondary-button wide-button" type="button" onClick={resetClientForm}>
+                              Cancel client edit
+                            </button>
+                          ) : (
+                            <button className="secondary-button wide-button" type="button" onClick={resetClientForm} disabled={!clientFormHasChanges}>
+                              Reset draft
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -2414,12 +3422,30 @@ function AppV2() {
                             </small>
                             <small>{(employee.attachments ?? []).length} documents</small>
                             <div className="employee-actions">
-                              <button className="secondary-button" type="button" onClick={() => startEditingEmployee(employee)}>
-                                Edit
+                              <button
+                                className="secondary-button icon-button"
+                                type="button"
+                                aria-label={`Employee actions for ${getDisplayName(employee)}`}
+                                onClick={() => setOpenEmployeeActionId((current) => (current === employee.id ? null : employee.id))}
+                              >
+                                ⋯
                               </button>
-                              <button className="danger-button" type="button" onClick={() => removeEmployee(employee.id)}>
-                                Delete
-                              </button>
+                              {openEmployeeActionId === employee.id ? (
+                                <div className="row-action-menu">
+                                  <button className="secondary-button" type="button" onClick={() => {
+                                    startEditingEmployee(employee);
+                                    setOpenEmployeeActionId(null);
+                                  }}>
+                                    Edit
+                                  </button>
+                                  <button className="danger-button" type="button" onClick={() => {
+                                    requestEmployeeDelete(employee.id);
+                                    setOpenEmployeeActionId(null);
+                                  }}>
+                                    Delete
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                         </article>
@@ -2965,6 +3991,48 @@ function AppV2() {
         </section>
         ) : null}
       </main>
+
+      {pendingClientDeleteTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="delete-client-title">
+            <h3 id="delete-client-title">Delete client: {pendingClientDeleteTarget.name}</h3>
+            <p className="admin-copy">
+              This will also delete {pendingClientDeleteEmployeeCount} employee profile{pendingClientDeleteEmployeeCount === 1 ? "" : "s"}
+              {" "}and {pendingClientDeleteRunCount} pay run{pendingClientDeleteRunCount === 1 ? "" : "s"} for this client.
+            </p>
+            <p className="admin-copy">This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={cancelClientDelete}>
+                Cancel
+              </button>
+              <button className="danger-button" type="button" onClick={() => void confirmClientDelete()} disabled={isDeletingClient}>
+                {isDeletingClient ? "Deleting client..." : "Delete client"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingEmployeeDeleteTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="delete-employee-title">
+            <h3 id="delete-employee-title">Delete employee: {pendingEmployeeDeleteTarget.name}</h3>
+            <p className="admin-copy">
+              This will remove the employee profile and {pendingEmployeeDeleteRunCount} related pay run
+              {pendingEmployeeDeleteRunCount === 1 ? "" : "s"}.
+            </p>
+            <p className="admin-copy">This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={cancelEmployeeDelete}>
+                Cancel
+              </button>
+              <button className="danger-button" type="button" onClick={() => void confirmEmployeeDelete()} disabled={isDeletingEmployee}>
+                {isDeletingEmployee ? "Deleting employee..." : "Delete employee"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
