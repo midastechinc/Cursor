@@ -1,5 +1,6 @@
 const { app, BrowserWindow, shell, dialog } = require("electron");
 const path = require("node:path");
+const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { autoUpdater } = require("electron-updater");
 
@@ -12,6 +13,15 @@ const getApiUrl = () => `http://127.0.0.1:${apiPort}`;
 const getAppRoot = () => app.getAppPath();
 const getDistServerEntry = () => path.join(getAppRoot(), "dist-server", "server", "index.js");
 const getStaticDir = () => path.join(getAppRoot(), "dist");
+const getLogFile = () => path.join(app.getPath("userData"), "desktop.log");
+
+function writeLog(message) {
+  try {
+    fs.appendFileSync(getLogFile(), `[${new Date().toISOString()}] ${message}\n`);
+  } catch {
+    // Ignore logging failures so app startup is not blocked.
+  }
+}
 
 function setupAutoUpdates() {
   if (!app.isPackaged) {
@@ -65,6 +75,7 @@ function setupAutoUpdates() {
 }
 
 function createWindow() {
+  writeLog(`Creating window. API URL: ${getApiUrl()}`);
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -80,7 +91,19 @@ function createWindow() {
   });
 
   mainWindow.loadURL(getApiUrl());
+  mainWindow.webContents.on("did-finish-load", () => {
+    writeLog(`Renderer loaded successfully: ${getApiUrl()}`);
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    writeLog(`Renderer process exited unexpectedly: ${JSON.stringify(details)}`);
+  });
+  mainWindow.webContents.on("console-message", (_event, level, message) => {
+    if (level >= 2) {
+      writeLog(`Renderer console message [${level}]: ${message}`);
+    }
+  });
   mainWindow.webContents.on("did-fail-load", async (_event, errorCode, errorDescription, validatedURL) => {
+    writeLog(`did-fail-load url=${validatedURL} code=${errorCode} message=${errorDescription}`);
     await dialog.showMessageBox({
       type: "error",
       title: "Midas Payroll could not load",
@@ -96,6 +119,13 @@ function createWindow() {
 
 async function startApiServer() {
   const serverEntry = getDistServerEntry();
+  const staticDir = getStaticDir();
+  writeLog(`App root: ${getAppRoot()}`);
+  writeLog(`Server entry: ${serverEntry}`);
+  writeLog(`Static dir: ${staticDir}`);
+  writeLog(`Server entry exists: ${fs.existsSync(serverEntry)}`);
+  writeLog(`Static dir exists: ${fs.existsSync(staticDir)}`);
+  writeLog(`Static index exists: ${fs.existsSync(path.join(staticDir, "index.html"))}`);
   const serverModule = await import(pathToFileURL(serverEntry).href);
   const dataDir = path.join(app.getPath("userData"), "data");
 
@@ -103,23 +133,26 @@ async function startApiServer() {
     port: apiPort,
     dataDir,
     serveClient: true,
-    staticDir: getStaticDir(),
+    staticDir,
   });
   apiServer = startupResult.server;
   apiPort = startupResult.port;
+  writeLog(`API server started on ${getApiUrl()}`);
 }
 
 app.whenReady().then(async () => {
   app.setName("Midas Payroll");
+  writeLog("App starting...");
   try {
     await startApiServer();
     createWindow();
     setupAutoUpdates();
   } catch (error) {
     console.error("Failed to start desktop app:", error?.message || error);
+    writeLog(`Startup failed: ${error?.message || error}`);
     dialog.showErrorBox(
       "Midas Payroll could not start",
-      `The local server failed to start.\n\n${error?.message || error}`,
+      `The local server failed to start.\n\n${error?.message || error}\n\nLog file: ${getLogFile()}`,
     );
     app.quit();
     return;
