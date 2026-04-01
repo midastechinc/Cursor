@@ -14,6 +14,7 @@ const getAppRoot = () => app.getAppPath();
 const getDistServerEntry = () => path.join(getAppRoot(), "dist-server", "server", "index.js");
 const getStaticDir = () => path.join(getAppRoot(), "dist");
 const getLogFile = () => path.join(app.getPath("userData"), "desktop.log");
+const isAddressInUseError = (error) => Boolean(error && typeof error === "object" && error.code === "EADDRINUSE");
 
 function writeLog(message) {
   try {
@@ -129,12 +130,27 @@ async function startApiServer() {
   const serverModule = await import(pathToFileURL(serverEntry).href);
   const dataDir = path.join(app.getPath("userData"), "data");
 
-  const startupResult = await serverModule.startServer({
-    port: apiPort,
-    dataDir,
-    serveClient: true,
-    staticDir,
-  });
+  let startupResult;
+  try {
+    startupResult = await serverModule.startServer({
+      port: apiPort,
+      dataDir,
+      serveClient: true,
+      staticDir,
+    });
+  } catch (error) {
+    if (isAddressInUseError(error)) {
+      writeLog(`Port ${apiPort} is in use. Retrying with an ephemeral port.`);
+      startupResult = await serverModule.startServer({
+        port: 0,
+        dataDir,
+        serveClient: true,
+        staticDir,
+      });
+    } else {
+      throw error;
+    }
+  }
   apiServer = startupResult.server;
   apiPort = startupResult.port;
   writeLog(`API server started on ${getApiUrl()}`);

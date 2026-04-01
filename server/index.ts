@@ -16,7 +16,8 @@ const isAddressInUseError = (error: unknown): error is NodeJS.ErrnoException =>
   Boolean(error && typeof error === "object" && "code" in error && (error as NodeJS.ErrnoException).code === "EADDRINUSE");
 
 export const startServer = async (options: StartServerOptions = {}) => {
-  const port = Number(options.port ?? process.env.PORT ?? 3001);
+  const requestedPort = Number(options.port ?? process.env.PORT ?? 3001);
+  const allowPortFallback = Boolean(options.serveClient);
   if (options.dataDir) {
     process.env.PAYROLL_DATA_DIR = options.dataDir;
   }
@@ -35,18 +36,30 @@ export const startServer = async (options: StartServerOptions = {}) => {
     });
   }
 
-  return await new Promise<import("node:http").Server>((resolve, reject) => {
-    const server = serverApp.listen(port, () => {
-      const address = server.address();
-      const activePort = typeof address === "object" && address ? address.port : port;
-      console.log(`Ontario payroll API listening on http://localhost:${activePort}`);
-      resolve(server);
+  const startListening = (listenPort: number) =>
+    new Promise<{ server: import("node:http").Server; port: number }>((resolve, reject) => {
+      const server = serverApp.listen(listenPort, () => {
+        const address = server.address();
+        const activePort = typeof address === "object" && address ? address.port : listenPort;
+        console.log(`Ontario payroll API listening on http://localhost:${activePort}`);
+        resolve({ server, port: activePort });
+      });
+
+      server.on("error", (error) => {
+        reject(error);
+      });
     });
 
-    server.on("error", (error) => {
-      reject(error);
-    });
-  });
+  try {
+    return await startListening(requestedPort);
+  } catch (error) {
+    if (!allowPortFallback || !isAddressInUseError(error)) {
+      throw error;
+    }
+
+    console.warn(`Port ${requestedPort} is in use. Falling back to a dynamic local port.`);
+    return await startListening(0);
+  }
 };
 
 const launchedFromCli = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
