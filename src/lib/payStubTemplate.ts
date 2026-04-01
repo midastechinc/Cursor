@@ -116,6 +116,8 @@ export const buildClassicPayStubMarkup = ({
   const incomeTaxCurrent = current.federalTax + current.provincialTax;
   const incomeTaxYtd = (ytd?.federalTax ?? 0) + (ytd?.provincialTax ?? 0);
 
+  const hasCurrentOvertime = Math.abs(current.overtimeHours) >= 0.0001 || Math.abs(current.grossOvertime) >= 0.0001;
+  const hasYtdOvertime = Math.abs(ytd?.overtimeHours ?? 0) >= 0.0001 || Math.abs(ytd?.grossOvertime ?? 0) >= 0.0001;
   const earningsRows = [
     `<tr>
       <td>${escapeHtml(employee?.employmentType === "salary" ? "Salary" : "Hourly Salary")}</td>
@@ -124,14 +126,16 @@ export const buildClassicPayStubMarkup = ({
       <td>${escapeHtml(blankMoneyIfZero(current.grossRegular))}</td>
       <td>${escapeHtml(blankMoneyIfZero(ytd?.grossRegular))}</td>
     </tr>`,
-    `<tr>
+  ];
+  if (hasCurrentOvertime || hasYtdOvertime) {
+    earningsRows.push(`<tr>
       <td>Overtime</td>
       <td>${escapeHtml(blankIfZero(current.overtimeHours) ? formatHoursClock(current.overtimeHours) : "")}</td>
-      <td>${escapeHtml(regularRate > 0 ? formatCurrency(regularRate * 1.5) : "")}</td>
+      <td>${escapeHtml(!isSalary && regularRate > 0 ? formatCurrency(regularRate * 1.5) : "")}</td>
       <td>${escapeHtml(blankMoneyIfZero(current.grossOvertime))}</td>
       <td>${escapeHtml(blankMoneyIfZero(ytd?.grossOvertime))}</td>
-    </tr>`,
-  ];
+    </tr>`);
+  }
   if (!isSalary) {
     earningsRows.push(`<tr>
       <td>VacPay-Paid Out</td>
