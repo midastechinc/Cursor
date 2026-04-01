@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-server/
+dist-electron/
 data/*.sqlite
 data/*.db
 *.tsbuildinfo
@@ -10,3 +11,4 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+release/

@@ -1,12 +1,26 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import initSqlJs, { type Database } from "sql.js";
 import { complianceTasks, sampleClients, sampleCompanyProfile, sampleDraft, sampleEmployees } from "../../src/data/sampleData.js";
 import { calculatePayroll } from "../../src/lib/payroll.js";
 import { getTaxTableSummary, getTaxYearFromDraft } from "../../src/lib/taxTables.js";
 import type { Client, CompanyProfile, ComplianceTask, Employee, PayRunDraft, PayRunRecord, PayStubTotals } from "../../src/types.js";
 
-const dataDir = path.resolve(process.cwd(), "data");
+const resolveDataDir = () => {
+  const configuredDir = process.env.PAYROLL_DATA_DIR?.trim();
+  if (configuredDir) {
+    return path.resolve(configuredDir);
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    return path.join(os.homedir(), ".midas-payroll", "data");
+  }
+
+  return path.resolve(process.cwd(), "data");
+};
+
+const dataDir = resolveDataDir();
 const dbPath = path.join(dataDir, "payroll.sqlite");
 
 fs.mkdirSync(dataDir, { recursive: true });
@@ -385,6 +399,40 @@ const createTables = () => {
 `);
 };
 
+const runMigrations = () => {
+  const rows = queryPayloadRows("SELECT payload FROM employees");
+  if (rows.length === 0) {
+    return;
+  }
+
+  const statement = db.prepare("UPDATE employees SET payload = ? WHERE id = ?");
+  let updatedAny = false;
+
+  for (const payload of rows) {
+    const parsed = JSON.parse(payload) as Partial<Employee> & { id?: string };
+    if (!parsed.id) {
+      continue;
+    }
+
+    if (parsed.terminationDate != null) {
+      continue;
+    }
+
+    const migrated: Employee = {
+      ...deserializeEmployee(payload),
+      terminationDate: "",
+    };
+    statement.run([serializeEmployee(migrated), migrated.id]);
+    updatedAny = true;
+  }
+
+  statement.free();
+
+  if (updatedAny) {
+    persistDatabase();
+  }
+};
+
 const seedDefaults = () => {
   if (queryCount("employees") === 0) {
     const statement = db.prepare("INSERT INTO employees (id, payload) VALUES (?, ?)");
@@ -432,6 +480,7 @@ export const initializeDatabase = async () => {
   const existingFile = fs.existsSync(dbPath) ? fs.readFileSync(dbPath) : undefined;
   db = existingFile ? new SQL.Database(existingFile) : new SQL.Database();
   createTables();
+  runMigrations();
   seedDefaults();
 };
 
