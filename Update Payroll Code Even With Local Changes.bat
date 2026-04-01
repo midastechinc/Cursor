@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 REM Always run from this script's folder.
 cd /d "%~dp0"
@@ -53,8 +53,8 @@ if "%HAS_CHANGES%"=="0" (
 
 if "%HAS_CHANGES%"=="1" (
   set "STASH_LABEL=auto-stash-before-update-%RANDOM%"
-  echo Local changes detected. Creating stash "%STASH_LABEL%"...
-  git stash push -u -m "%STASH_LABEL%"
+  echo Local changes detected. Creating stash "!STASH_LABEL!"...
+  git stash push -u -m "!STASH_LABEL!"
   if errorlevel 1 (
     echo Could not stash local changes. Update cancelled.
     pause
