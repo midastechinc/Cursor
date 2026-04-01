@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 REM Always run from this script's folder.
 cd /d "%~dp0"
@@ -50,26 +50,43 @@ if /i "%CURRENT_BRANCH%"=="HEAD" (
   exit /b 1
 )
 
-git diff --quiet --ignore-submodules --
-if errorlevel 1 (
-  echo You have uncommitted changes.
-  echo Commit or stash changes before updating from GitHub.
-  pause
-  exit /b 1
-)
+set "HAS_CHANGES=0"
+set "STASH_CREATED=0"
 
 git diff --cached --quiet --ignore-submodules --
-if errorlevel 1 (
-  echo You have staged changes.
-  echo Commit or stash changes before updating from GitHub.
-  pause
-  exit /b 1
+if errorlevel 1 set "HAS_CHANGES=1"
+
+git diff --quiet --ignore-submodules --
+if errorlevel 1 set "HAS_CHANGES=1"
+
+if "%HAS_CHANGES%"=="0" (
+  for /f "delims=" %%U in ('git ls-files --others --exclude-standard') do (
+    set "HAS_CHANGES=1"
+    goto :checked_untracked
+  )
+)
+:checked_untracked
+
+if "%HAS_CHANGES%"=="1" (
+  set "STASH_LABEL=auto-stash-before-update-%RANDOM%"
+  echo Local changes detected. Creating stash "!STASH_LABEL!"...
+  git stash push -u -m "!STASH_LABEL!"
+  if errorlevel 1 (
+    echo Could not stash local changes. Update cancelled.
+    pause
+    exit /b 1
+  )
+  set "STASH_CREATED=1"
 )
 
 echo Fetching latest changes for branch "%CURRENT_BRANCH%"...
 git fetch origin "%CURRENT_BRANCH%"
 if errorlevel 1 (
   echo Fetch failed. Check your internet connection and remote access.
+  if "%STASH_CREATED%"=="1" (
+    echo Attempting to restore your stashed changes...
+    git stash pop
+  )
   pause
   exit /b 1
 )
@@ -78,8 +95,23 @@ echo Pulling latest changes into "%CURRENT_BRANCH%"...
 git pull origin "%CURRENT_BRANCH%"
 if errorlevel 1 (
   echo Pull failed. Resolve any merge issues and try again.
+  if "%STASH_CREATED%"=="1" (
+    echo Attempting to restore your stashed changes...
+    git stash pop
+  )
   pause
   exit /b 1
+)
+
+if "%STASH_CREATED%"=="1" (
+  echo Re-applying your stashed local changes...
+  git stash pop
+  if errorlevel 1 (
+    echo Stash re-apply reported conflicts.
+    echo Resolve conflicts, then run this script again.
+    pause
+    exit /b 1
+  )
 )
 
 echo Installing/updating npm dependencies...
@@ -98,6 +130,11 @@ start "Payroll Web App" cmd /k "cd /d ""%~dp0"" && npm run dev:client"
 
 echo.
 echo Update + install + launch complete.
+if "%STASH_CREATED%"=="1" (
+  echo Your local changes were stashed and restored automatically.
+) else (
+  echo No local changes were found.
+)
 echo Branch: %CURRENT_BRANCH%
 echo API: http://localhost:3001
 echo App: http://localhost:5173
