@@ -113,6 +113,10 @@ function createWindow() {
     });
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Allow internal popup windows used by print templates.
+    if (url === "about:blank" || url.startsWith(getApiUrl())) {
+      return { action: "allow" };
+    }
     shell.openExternal(url);
     return { action: "deny" };
   });
@@ -183,6 +187,14 @@ app.whenReady().then(async () => {
 
 app.on("web-contents-created", (_event, contents) => {
   contents.on("will-navigate", (event, navigationUrl) => {
+    if (
+      navigationUrl === "about:blank"
+      || navigationUrl.startsWith("data:")
+      || navigationUrl.startsWith("blob:")
+      || navigationUrl.startsWith(getApiUrl())
+    ) {
+      return;
+    }
     if (!navigationUrl.startsWith(getApiUrl())) {
       event.preventDefault();
       shell.openExternal(navigationUrl);
