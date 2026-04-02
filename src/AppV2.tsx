@@ -24,6 +24,28 @@ import type {
   WorkerClassification,
 } from "./types";
 
+type DesktopApiResult = {
+  ok: boolean;
+  canceled?: boolean;
+  error?: string;
+  path?: string;
+  backupPath?: string | null;
+  restartRequired?: boolean;
+  restarted?: boolean;
+};
+
+type DesktopBridge = {
+  platform?: string;
+  isDesktop?: boolean;
+  printCurrentWindow?: () => Promise<DesktopApiResult>;
+  openMailto?: (url: string) => Promise<DesktopApiResult>;
+  exportDatabase?: () => Promise<DesktopApiResult>;
+  importDatabase?: () => Promise<DesktopApiResult>;
+};
+
+const getDesktopBridge = () =>
+  (window as Window & { midasPayrollDesktop?: DesktopBridge }).midasPayrollDesktop;
+
 const payFrequencyOptions: PayFrequency[] = ["weekly", "biweekly", "semi-monthly", "monthly"];
 const workerClassificationOptions: WorkerClassification[] = ["employee", "owner-employee", "self-employed-contractor"];
 const cppStatusOptions: CppStatus[] = ["standard", "exempt-under-18", "exempt-70-plus", "cpp-working-beneficiary-exempt"];
@@ -1067,9 +1089,9 @@ const emailPayStubFromHistory = (
   ];
   const body = encodeURIComponent(bodyLines.join("\n"));
   const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${subject}&body=${body}`;
-  const desktopApi = (window as Window & { midasPayrollDesktop?: { openMailto?: (url: string) => void } }).midasPayrollDesktop;
+  const desktopApi = getDesktopBridge();
   if (desktopApi?.openMailto) {
-    desktopApi.openMailto(mailtoUrl);
+    void desktopApi.openMailto(mailtoUrl);
     return;
   }
   window.location.href = mailtoUrl;
@@ -1310,6 +1332,8 @@ function AppV2() {
   const [isSavingCompany, setIsSavingCompany] = useState(false);
   const [isSavingClient, setIsSavingClient] = useState(false);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
+  const [isExportingDatabase, setIsExportingDatabase] = useState(false);
+  const [isImportingDatabase, setIsImportingDatabase] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Connecting payroll studio...");
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const clientMenuContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2360,11 +2384,66 @@ function AppV2() {
     try {
       const fallbackEmployee = employees.find((item) => item.id === run.employeeId);
       const fallbackClient = clients.find((item) => item.id === (run.clientId ?? fallbackEmployee?.clientId));
-      const shouldAutoOpenPrint = !(window as typeof window & { midasPayrollDesktop?: { platform?: string } }).midasPayrollDesktop;
+      const shouldAutoOpenPrint = !getDesktopBridge();
       printPayStub(run, fallbackEmployee, companyProfile, fallbackClient, shouldAutoOpenPrint);
       setStatusMessage(`Opened printable pay stub for ${run.employeeName}.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not print the pay stub.");
+    }
+  };
+
+  const exportDatabaseBackup = async () => {
+    const desktopApi = getDesktopBridge();
+    if (!desktopApi?.exportDatabase) {
+      setStatusMessage("Database export is available in the desktop app only.");
+      return;
+    }
+
+    setIsExportingDatabase(true);
+    try {
+      const result = await desktopApi.exportDatabase();
+      if (result.canceled) {
+        setStatusMessage("Database export canceled.");
+        return;
+      }
+      if (!result.ok) {
+        throw new Error(result.error || "Could not export database backup.");
+      }
+      setStatusMessage(`Database backup exported: ${result.path ?? "saved"}.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not export database backup.");
+    } finally {
+      setIsExportingDatabase(false);
+    }
+  };
+
+  const importDatabaseBackup = async () => {
+    const desktopApi = getDesktopBridge();
+    if (!desktopApi?.importDatabase) {
+      setStatusMessage("Database import is available in the desktop app only.");
+      return;
+    }
+
+    setIsImportingDatabase(true);
+    try {
+      const result = await desktopApi.importDatabase();
+      if (result.canceled) {
+        setStatusMessage("Database import canceled.");
+        return;
+      }
+      if (!result.ok) {
+        throw new Error(result.error || "Could not import database.");
+      }
+      if (result.restarted) {
+        setStatusMessage("Database imported. Restarting app now...");
+        return;
+      }
+      const backupNote = result.backupPath ? ` Pre-import backup: ${result.backupPath}.` : "";
+      setStatusMessage(`Database imported successfully.${backupNote} Restart the app to load imported data.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not import database.");
+    } finally {
+      setIsImportingDatabase(false);
     }
   };
 
@@ -2815,6 +2894,31 @@ function AppV2() {
                     <button className="primary-button" type="button" onClick={saveCompanyProfile} disabled={isSavingCompany}>
                       {isSavingCompany ? "Saving company..." : "Save company settings"}
                     </button>
+                  </div>
+
+                  <div className="detail-card">
+                    <h3>Data backup and restore</h3>
+                    <p className="admin-copy">
+                      Export a full SQLite backup before updates, or import an existing SQLite file to restore prior data.
+                    </p>
+                    <div className="panel-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={exportDatabaseBackup}
+                        disabled={isExportingDatabase || isImportingDatabase}
+                      >
+                        {isExportingDatabase ? "Exporting backup..." : "Export database backup"}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={importDatabaseBackup}
+                        disabled={isExportingDatabase || isImportingDatabase}
+                      >
+                        {isImportingDatabase ? "Importing database..." : "Import database backup"}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="detail-card">

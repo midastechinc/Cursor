@@ -8,6 +8,7 @@ const { autoUpdater } = require("electron-updater");
 let mainWindow = null;
 let apiServer = null;
 let apiPort = Number(process.env.PORT || "3001");
+let activeDataDir = null;
 
 const getApiUrl = () => `http://127.0.0.1:${apiPort}`;
 
@@ -134,22 +135,28 @@ const copyFileIfMissing = (sourcePath, targetPath) => {
 };
 
 const resolveDesktopDataDir = () => {
-  const legacyDir = path.join(os.homedir(), ".midas-payroll", "data");
   const userDataDir = path.join(app.getPath("userData"), "data");
-  const legacyDbPath = path.join(legacyDir, DB_FILE_NAME);
+  const legacyDbPath = path.join(os.homedir(), ".midas-payroll", "data", DB_FILE_NAME);
   const userDbPath = path.join(userDataDir, DB_FILE_NAME);
   const roamingDbPath = path.join(app.getPath("appData"), "ontario-payroll-v1", "data", DB_FILE_NAME);
 
   if (fs.existsSync(legacyDbPath)) {
-    writeLog(`Using legacy data directory: ${legacyDir}`);
-    return legacyDir;
+    if (copyFileIfMissing(legacyDbPath, userDbPath)) {
+      writeLog(`Copied legacy database from ${legacyDbPath} to ${userDbPath}`);
+    } else {
+      writeLog(`Legacy database found at ${legacyDbPath}`);
+    }
   }
 
   if (fs.existsSync(roamingDbPath)) {
-    writeLog(`Using roaming data directory: ${path.dirname(roamingDbPath)}`);
-    return path.dirname(roamingDbPath);
+    if (copyFileIfMissing(roamingDbPath, userDbPath)) {
+      writeLog(`Copied roaming database from ${roamingDbPath} to ${userDbPath}`);
+    } else {
+      writeLog(`Roaming database found at ${roamingDbPath}`);
+    }
   }
 
+  fs.mkdirSync(userDataDir, { recursive: true });
   if (fs.existsSync(userDbPath)) {
     writeLog(`Using user data directory: ${userDataDir}`);
     return userDataDir;
@@ -157,6 +164,21 @@ const resolveDesktopDataDir = () => {
 
   writeLog(`No existing database found. Using user data directory: ${userDataDir}`);
   return userDataDir;
+};
+
+const getActiveDbPath = () => {
+  const dataDir = activeDataDir || resolveDesktopDataDir();
+  return path.join(dataDir, DB_FILE_NAME);
+};
+
+const formatDateForFilename = (date) => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  return `${yyyy}${mm}${dd}-${hh}${min}${ss}`;
 };
 
 ipcMain.handle("desktop-print-current", async () => {
@@ -181,6 +203,101 @@ ipcMain.handle("desktop-open-mailto", async (_event, url) => {
   }
 });
 
+ipcMain.handle("desktop-export-database", async () => {
+  try {
+    const sourcePath = getActiveDbPath();
+    if (!fs.existsSync(sourcePath)) {
+      return { ok: false, error: `Database not found at ${sourcePath}` };
+    }
+
+    const defaultName = `payroll-backup-${formatDateForFilename(new Date())}.sqlite`;
+    const defaultDir = app.getPath("documents");
+    const dialogResult = await dialog.showSaveDialog(mainWindow ?? undefined, {
+      title: "Export payroll database backup",
+      defaultPath: path.join(defaultDir, defaultName),
+      filters: [
+        { name: "SQLite Database", extensions: ["sqlite", "db"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+    });
+
+    if (dialogResult.canceled || !dialogResult.filePath) {
+      return { ok: true, canceled: true };
+    }
+
+    fs.copyFileSync(sourcePath, dialogResult.filePath);
+    writeLog(`Exported database backup to ${dialogResult.filePath}`);
+    return { ok: true, path: dialogResult.filePath };
+  } catch (error) {
+    writeLog(`Database export failed: ${error?.message || error}`);
+    return { ok: false, error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("desktop-import-database", async () => {
+  try {
+    const openResult = await dialog.showOpenDialog(mainWindow ?? undefined, {
+      title: "Import payroll database",
+      properties: ["openFile"],
+      filters: [
+        { name: "SQLite Database", extensions: ["sqlite", "db"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
+    if (openResult.canceled || openResult.filePaths.length === 0) {
+      return { ok: true, canceled: true };
+    }
+
+    const sourcePath = openResult.filePaths[0];
+    if (!fs.existsSync(sourcePath)) {
+      return { ok: false, error: `Selected file does not exist: ${sourcePath}` };
+    }
+
+    const targetPath = getActiveDbPath();
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+
+    let backupPath = null;
+    if (fs.existsSync(targetPath)) {
+      backupPath = path.join(path.dirname(targetPath), `payroll-pre-import-${formatDateForFilename(new Date())}.sqlite`);
+      fs.copyFileSync(targetPath, backupPath);
+      writeLog(`Created pre-import backup at ${backupPath}`);
+    }
+
+    fs.copyFileSync(sourcePath, targetPath);
+    writeLog(`Imported database from ${sourcePath} to ${targetPath}`);
+
+    const restartPrompt = await dialog.showMessageBox(mainWindow ?? undefined, {
+      type: "question",
+      title: "Restart required",
+      message: "Database imported successfully.",
+      detail: "The app must restart to load imported data. Restart now?",
+      buttons: ["Restart now", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+
+    const shouldRestart = restartPrompt.response === 0;
+    if (shouldRestart) {
+      setTimeout(() => {
+        app.relaunch();
+        app.exit(0);
+      }, 150);
+    }
+
+    return {
+      ok: true,
+      path: sourcePath,
+      backupPath,
+      restartRequired: true,
+      restarted: shouldRestart,
+    };
+  } catch (error) {
+    writeLog(`Database import failed: ${error?.message || error}`);
+    return { ok: false, error: error?.message || String(error) };
+  }
+});
+
 async function startApiServer() {
   const serverEntry = getDistServerEntry();
   const staticDir = getStaticDir();
@@ -192,6 +309,7 @@ async function startApiServer() {
   writeLog(`Static index exists: ${fs.existsSync(path.join(staticDir, "index.html"))}`);
   const serverModule = await import(pathToFileURL(serverEntry).href);
   const dataDir = resolveDesktopDataDir();
+  activeDataDir = dataDir;
 
   let startupResult;
   try {

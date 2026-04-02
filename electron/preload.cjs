@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld("midasPayrollDesktop", {
   isDesktop: true,
   printCurrentWindow: () => ipcRenderer.invoke("desktop-print-current"),
   openMailto: (href) => ipcRenderer.invoke("desktop-open-mailto", href),
+  exportDatabase: () => ipcRenderer.invoke("desktop-export-database"),
+  importDatabase: () => ipcRenderer.invoke("desktop-import-database"),
 });
