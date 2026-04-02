@@ -1022,6 +1022,7 @@ const printPayStub = (
   fallbackEmployee?: Employee,
   fallbackCompanyProfile?: CompanyProfile,
   fallbackClient?: Client,
+  autoOpenPrintDialog = true,
 ) => {
   const printWindow = window.open("", "_blank", "width=1440,height=980");
   if (!printWindow) {
@@ -1031,12 +1032,47 @@ const printPayStub = (
   printWindow.document.write(buildPayStubMarkup(run, fallbackEmployee, fallbackCompanyProfile, fallbackClient));
   printWindow.document.close();
   printWindow.focus();
+  if (!autoOpenPrintDialog) {
+    return;
+  }
+
   printWindow.onload = () => {
     printWindow.print();
     printWindow.onafterprint = () => {
       printWindow.close();
     };
   };
+};
+
+const emailPayStubFromHistory = (
+  run: PayRunRecord,
+  fallbackEmployee?: Employee,
+  fallbackClient?: Client,
+) => {
+  const recipient = fallbackEmployee?.email?.trim();
+  if (!recipient) {
+    throw new Error(`No employee email is set for ${run.employeeName}.`);
+  }
+
+  const subject = encodeURIComponent(`Paystub - ${run.employeeName} - ${formatPayPeriod(run.payPeriodStart, run.payPeriodEnd)}`);
+  const bodyLines = [
+    `Hello ${run.employeeName},`,
+    "",
+    "Please find your paystub details below:",
+    `Client: ${run.clientName ?? fallbackClient?.name ?? "Client"}`,
+    `Pay period: ${formatPayPeriod(run.payPeriodStart, run.payPeriodEnd)}`,
+    `Net pay: ${formatCurrency(run.netPay)}`,
+    "",
+    "To print or save the official paystub PDF, use the Payroll app history and click Print.",
+  ];
+  const body = encodeURIComponent(bodyLines.join("\n"));
+  const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${subject}&body=${body}`;
+  const desktopApi = (window as Window & { midasPayrollDesktop?: { openMailto?: (url: string) => void } }).midasPayrollDesktop;
+  if (desktopApi?.openMailto) {
+    desktopApi.openMailto(mailtoUrl);
+    return;
+  }
+  window.location.href = mailtoUrl;
 };
 
 const openCraPayrollTables = () => {
@@ -2324,10 +2360,22 @@ function AppV2() {
     try {
       const fallbackEmployee = employees.find((item) => item.id === run.employeeId);
       const fallbackClient = clients.find((item) => item.id === (run.clientId ?? fallbackEmployee?.clientId));
-      printPayStub(run, fallbackEmployee, companyProfile, fallbackClient);
+      const shouldAutoOpenPrint = !(window as typeof window & { midasPayrollDesktop?: { platform?: string } }).midasPayrollDesktop;
+      printPayStub(run, fallbackEmployee, companyProfile, fallbackClient, shouldAutoOpenPrint);
       setStatusMessage(`Opened printable pay stub for ${run.employeeName}.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not print the pay stub.");
+    }
+  };
+
+  const emailSavedPayStub = (run: PayRunRecord) => {
+    try {
+      const fallbackEmployee = employees.find((item) => item.id === run.employeeId);
+      const fallbackClient = clients.find((item) => item.id === (run.clientId ?? fallbackEmployee?.clientId));
+      emailPayStubFromHistory(run, fallbackEmployee, fallbackClient);
+      setStatusMessage(`Opened email draft for ${run.employeeName}.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not prepare paystub email.");
     }
   };
 
@@ -3515,6 +3563,9 @@ function AppV2() {
                     <div className="history-cell history-actions">
                       <button className="secondary-button" type="button" onClick={() => printSavedPayStub(run)}>
                         Print
+                      </button>
+                      <button className="secondary-button" type="button" onClick={() => emailSavedPayStub(run)}>
+                        Email paystub
                       </button>
                       <button className="secondary-button" type="button" onClick={() => {
                         setViewMode("payroll");

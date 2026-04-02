@@ -90,15 +90,11 @@ export const buildClassicPayStubMarkup = ({
   createdAt,
   payFrequency,
 }: PayStubTemplateInput) => {
-  const employerName = companyProfile?.legalName || companyProfile?.name || "Payroll provider";
   const displayName = employee?.fullName || [employee?.firstName, employee?.lastName].filter(Boolean).join(" ").trim() || employeeName;
   const payDate = formatStatementDate(createdAt || draft?.payPeriodEnd || "");
   const payStartDate = formatStatementDate(draft?.payPeriodStart || "");
   const payEndDate = formatStatementDate(draft?.payPeriodEnd || "");
   const employeeAddress = [employee?.addressLine1, employee?.addressLine2, [employee?.city, employee?.province].filter(Boolean).join(", "), employee?.postalCode]
-    .filter(Boolean)
-    .join(", ");
-  const employerAddress = [companyProfile?.addressLine1, companyProfile?.addressLine2, [companyProfile?.city, companyProfile?.province].filter(Boolean).join(", "), companyProfile?.postalCode]
     .filter(Boolean)
     .join(", ");
   const periodsPerYear =
@@ -206,10 +202,6 @@ export const buildClassicPayStubMarkup = ({
     <main class="sheet">
       <div class="head-grid">
         <div class="company">
-          <strong>${escapeHtml(employerName)}</strong>
-          <span>${escapeHtml(textOrDash(companyProfile?.addressLine1))}</span>
-          ${companyProfile?.addressLine2 ? `<span>${escapeHtml(companyProfile.addressLine2)}</span>` : ""}
-          <span>${escapeHtml([companyProfile?.city, companyProfile?.province, companyProfile?.postalCode].filter(Boolean).join(", "))}</span>
         </div>
         <div class="mini-box">
           <table><tbody>
@@ -231,7 +223,7 @@ export const buildClassicPayStubMarkup = ({
       <div class="employee-info">
         <table><tbody>
           <tr><td>Employee</td><td>${escapeHtml(displayName)}${employeeAddress ? `, ${employeeAddress}` : ""}</td></tr>
-          <tr><td>Occupation</td><td>${escapeHtml(employeeRole)} · ${escapeHtml(employerName)}${employerAddress ? `, ${escapeHtml(employerAddress)}` : ""}</td></tr>
+          <tr><td>Occupation</td><td>${escapeHtml(employeeRole)}</td></tr>
         </tbody></table>
       </div>
 

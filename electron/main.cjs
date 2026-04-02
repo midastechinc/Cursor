@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, dialog } = require("electron");
+const { app, BrowserWindow, shell, dialog, ipcMain } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
@@ -122,6 +122,19 @@ function createWindow() {
   });
 }
 
+ipcMain.handle("desktop-print-current", async () => {
+  if (!mainWindow) {
+    return { ok: false, error: "No active desktop window." };
+  }
+  try {
+    const frame = mainWindow.webContents.mainFrame;
+    await frame.executeJavaScript("window.print()", true);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) };
+  }
+});
+
 async function startApiServer() {
   const serverEntry = getDistServerEntry();
   const staticDir = getStaticDir();
@@ -182,6 +195,16 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
+  });
+});
+
+app.on("web-contents-created", (_event, contents) => {
+  contents.setWindowOpenHandler(({ url }) => {
+    if (url === "about:blank" || url.startsWith(getApiUrl())) {
+      return { action: "allow" };
+    }
+    shell.openExternal(url);
+    return { action: "deny" };
   });
 });
 

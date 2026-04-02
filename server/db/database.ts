@@ -400,12 +400,18 @@ const createTables = () => {
 };
 
 const runMigrations = () => {
-  const rows = queryPayloadRows("SELECT payload FROM employees");
-  if (rows.length === 0) {
+  const hasExistingData =
+    queryCount("employees") > 0
+    || queryCount("clients") > 0
+    || queryCount("pay_runs") > 0
+    || queryCount("company_profile") > 0;
+
+  if (!hasExistingData) {
     return;
   }
 
-  const statement = db.prepare("UPDATE employees SET payload = ? WHERE id = ?");
+  const rows = queryPayloadRows("SELECT payload FROM employees");
+  const statement = rows.length > 0 ? db.prepare("UPDATE employees SET payload = ? WHERE id = ?") : null;
   let updatedAny = false;
 
   for (const payload of rows) {
@@ -422,11 +428,20 @@ const runMigrations = () => {
       ...deserializeEmployee(payload),
       terminationDate: "",
     };
-    statement.run([serializeEmployee(migrated), migrated.id]);
+    statement?.run([serializeEmployee(migrated), migrated.id]);
     updatedAny = true;
   }
 
-  statement.free();
+  statement?.free();
+
+  if (queryCount("compliance_tasks") === 0) {
+    const complianceStatement = db.prepare("INSERT INTO compliance_tasks (id, payload) VALUES (?, ?)");
+    for (const task of complianceTasks) {
+      complianceStatement.run([task.id, JSON.stringify(task)]);
+    }
+    complianceStatement.free();
+    updatedAny = true;
+  }
 
   if (updatedAny) {
     persistDatabase();
