@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, dialog, ipcMain } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const { pathToFileURL } = require("node:url");
 const { autoUpdater } = require("electron-updater");
 
@@ -15,6 +16,7 @@ const getDistServerEntry = () => path.join(getAppRoot(), "dist-server", "server"
 const getStaticDir = () => path.join(getAppRoot(), "dist");
 const getLogFile = () => path.join(app.getPath("userData"), "desktop.log");
 const isAddressInUseError = (error) => Boolean(error && typeof error === "object" && error.code === "EADDRINUSE");
+const DB_FILE_NAME = "payroll.sqlite";
 
 function writeLog(message) {
   try {
@@ -122,6 +124,41 @@ function createWindow() {
   });
 }
 
+const copyFileIfMissing = (sourcePath, targetPath) => {
+  if (!fs.existsSync(sourcePath) || fs.existsSync(targetPath)) {
+    return false;
+  }
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.copyFileSync(sourcePath, targetPath);
+  return true;
+};
+
+const resolveDesktopDataDir = () => {
+  const legacyDir = path.join(os.homedir(), ".midas-payroll", "data");
+  const userDataDir = path.join(app.getPath("userData"), "data");
+  const legacyDbPath = path.join(legacyDir, DB_FILE_NAME);
+  const userDbPath = path.join(userDataDir, DB_FILE_NAME);
+  const roamingDbPath = path.join(app.getPath("appData"), "ontario-payroll-v1", "data", DB_FILE_NAME);
+
+  if (fs.existsSync(legacyDbPath)) {
+    writeLog(`Using legacy data directory: ${legacyDir}`);
+    return legacyDir;
+  }
+
+  if (fs.existsSync(roamingDbPath)) {
+    writeLog(`Using roaming data directory: ${path.dirname(roamingDbPath)}`);
+    return path.dirname(roamingDbPath);
+  }
+
+  if (fs.existsSync(userDbPath)) {
+    writeLog(`Using user data directory: ${userDataDir}`);
+    return userDataDir;
+  }
+
+  writeLog(`No existing database found. Using user data directory: ${userDataDir}`);
+  return userDataDir;
+};
+
 ipcMain.handle("desktop-print-current", async () => {
   if (!mainWindow) {
     return { ok: false, error: "No active desktop window." };
@@ -129,6 +166,15 @@ ipcMain.handle("desktop-print-current", async () => {
   try {
     const frame = mainWindow.webContents.mainFrame;
     await frame.executeJavaScript("window.print()", true);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("desktop-open-mailto", async (_event, url) => {
+  try {
+    await shell.openExternal(url);
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error?.message || String(error) };
@@ -145,7 +191,7 @@ async function startApiServer() {
   writeLog(`Static dir exists: ${fs.existsSync(staticDir)}`);
   writeLog(`Static index exists: ${fs.existsSync(path.join(staticDir, "index.html"))}`);
   const serverModule = await import(pathToFileURL(serverEntry).href);
-  const dataDir = path.join(app.getPath("userData"), "data");
+  const dataDir = resolveDesktopDataDir();
 
   let startupResult;
   try {
