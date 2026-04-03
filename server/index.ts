@@ -62,6 +62,10 @@ export const startServer = async (options: StartServerOptions = {}) => {
   }
 };
 
+export const reloadDatabase = async () => {
+  await initializeDatabase();
+};
+
 const launchedFromCli = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (launchedFromCli) {

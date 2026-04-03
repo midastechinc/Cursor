@@ -160,6 +160,27 @@ export const buildClassicPayStubMarkup = ({
       }
       * { box-sizing: border-box; }
       body { margin: 0; color: var(--ink); background: #efefef; padding: 12px; }
+      .preview-toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        justify-content: flex-end;
+        margin: 0 auto 10px;
+        max-width: 8.1in;
+      }
+      .preview-toolbar button {
+        border: 1px solid #0f4fb8;
+        border-radius: 999px;
+        padding: 10px 16px;
+        background: #1152b1;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        box-shadow: 0 10px 24px rgba(17, 82, 177, 0.18);
+      }
+      .preview-toolbar button:hover { background: #0d4492; }
       .sheet { max-width: 8.1in; margin: 0 auto; background: white; border: 1px solid #cfcfcf; padding: 10px; }
       .head-grid { display: grid; grid-template-columns: minmax(0,1fr) 2.55in; gap: 10px; }
       .company { display: grid; gap: 2px; }
@@ -194,11 +215,15 @@ export const buildClassicPayStubMarkup = ({
       .withholdings-block th:nth-child(3), .withholdings-block td:nth-child(3) { width: 25%; }
       @media print {
         body { background: white; padding: 0; }
+        .preview-toolbar { display: none; }
         .sheet { border: none; padding: 0; max-width: none; }
       }
     </style>
   </head>
   <body>
+    <div class="preview-toolbar">
+      <button type="button" onclick="window.print()">Print paystub</button>
+    </div>
     <main class="sheet">
       <div class="head-grid">
         <div class="company">
@@ -256,6 +281,14 @@ export const buildClassicPayStubMarkup = ({
         </div>
       </div>
     </main>
+    <script>
+      window.addEventListener('keydown', function (event) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
+          event.preventDefault();
+          window.print();
+        }
+      });
+    </script>
   </body>
 </html>`;
 };

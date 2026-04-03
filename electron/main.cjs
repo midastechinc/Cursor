@@ -3,12 +3,15 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 const { pathToFileURL } = require("node:url");
+const { execFile } = require("node:child_process");
 const { autoUpdater } = require("electron-updater");
 
 let mainWindow = null;
 let apiServer = null;
 let apiPort = Number(process.env.PORT || "3001");
 let activeDataDir = null;
+let autoUpdatesConfigured = false;
+let apiModule = null;
 
 const getApiUrl = () => `http://127.0.0.1:${apiPort}`;
 
@@ -28,33 +31,17 @@ function writeLog(message) {
 }
 
 function setupAutoUpdates() {
-  if (!app.isPackaged) {
+  if (!app.isPackaged || autoUpdatesConfigured) {
     return;
   }
+  autoUpdatesConfigured = true;
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on("error", (error) => {
+    writeLog(`Auto-update error: ${error?.message || error}`);
     console.error("Auto-update error:", error?.message || error);
-  });
-
-  autoUpdater.on("update-available", async (info) => {
-    const result = await dialog.showMessageBox({
-      type: "info",
-      buttons: ["Download and Install", "Later"],
-      defaultId: 0,
-      cancelId: 1,
-      title: "Update available",
-      message: `Version ${info.version} is available.`,
-      detail: "Download the update now? The app will restart after installation.",
-    });
-
-    if (result.response === 0) {
-      autoUpdater.downloadUpdate().catch((error) => {
-        console.error("Failed to download update:", error?.message || error);
-      });
-    }
   });
 
   autoUpdater.on("update-downloaded", async () => {
@@ -72,9 +59,137 @@ function setupAutoUpdates() {
       autoUpdater.quitAndInstall();
     }
   });
+}
 
-  autoUpdater.checkForUpdates().catch((error) => {
-    console.error("Failed to check for updates:", error?.message || error);
+function runExecutable(file, args) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { windowsHide: true }, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function createPayStubPdf({ html, employeeName, payPeriodStart, payPeriodEnd }) {
+  const pdfWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+    },
+  });
+
+  try {
+    await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const pdfBuffer = await pdfWindow.webContents.printToPDF({
+      printBackground: true,
+      pageSize: "Letter",
+      landscape: false,
+      margins: {
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+      },
+      preferCSSPageSize: true,
+    });
+
+    const safeName = String(employeeName || "employee").replace(/[<>:"/\\|?*]+/g, "-").trim() || "employee";
+    const safeStart = String(payPeriodStart || "").replace(/[<>:"/\\|?*]+/g, "-");
+    const safeEnd = String(payPeriodEnd || "").replace(/[<>:"/\\|?*]+/g, "-");
+    const fileName = `paystub-${safeName}-${safeStart}-to-${safeEnd}.pdf`;
+    const pdfPath = path.join(os.tmpdir(), fileName);
+    fs.writeFileSync(pdfPath, pdfBuffer);
+    return pdfPath;
+  } finally {
+    if (!pdfWindow.isDestroyed()) {
+      pdfWindow.destroy();
+    }
+  }
+}
+
+async function openOutlookDraftWithAttachment({ recipient, subject, body, attachmentPath }) {
+  const escapedRecipient = recipient.replace(/'/g, "''");
+  const escapedSubject = subject.replace(/'/g, "''");
+  const escapedBody = body.replace(/'/g, "''");
+  const escapedAttachmentPath = attachmentPath.replace(/'/g, "''");
+  const script = `
+    $outlook = New-Object -ComObject Outlook.Application
+    $mail = $outlook.CreateItem(0)
+    $mail.To = '${escapedRecipient}'
+    $mail.Subject = '${escapedSubject}'
+    $mail.Body = '${escapedBody}'
+    $mail.Attachments.Add('${escapedAttachmentPath}') | Out-Null
+    $mail.Display()
+  `;
+  await runExecutable("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+}
+
+async function exportDatabaseBackupWithDialog(options = {}) {
+  try {
+    const sourcePath = getActiveDbPath();
+    if (!fs.existsSync(sourcePath)) {
+      return { ok: false, error: `Database not found at ${sourcePath}` };
+    }
+
+    const defaultName = options.defaultName ?? `payroll-backup-${formatDateForFilename(new Date())}.sqlite`;
+    const defaultDir = app.getPath("documents");
+    const dialogResult = await dialog.showSaveDialog(mainWindow ?? undefined, {
+      title: options.title ?? "Export payroll database backup",
+      defaultPath: path.join(defaultDir, defaultName),
+      filters: [
+        { name: "SQLite Database", extensions: ["sqlite", "db"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+      message: options.message,
+    });
+
+    if (dialogResult.canceled || !dialogResult.filePath) {
+      return { ok: true, canceled: true };
+    }
+
+    fs.copyFileSync(sourcePath, dialogResult.filePath);
+    writeLog(`Exported database backup to ${dialogResult.filePath}`);
+    return { ok: true, path: dialogResult.filePath };
+  } catch (error) {
+    writeLog(`Database export failed: ${error?.message || error}`);
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+function checkForUpdatesOnce() {
+  return new Promise((resolve, reject) => {
+    const onAvailable = (info) => {
+      cleanup();
+      resolve({ available: true, info });
+    };
+    const onNotAvailable = (info) => {
+      cleanup();
+      resolve({ available: false, info });
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      autoUpdater.removeListener("update-available", onAvailable);
+      autoUpdater.removeListener("update-not-available", onNotAvailable);
+      autoUpdater.removeListener("error", onError);
+    };
+
+    autoUpdater.on("update-available", onAvailable);
+    autoUpdater.on("update-not-available", onNotAvailable);
+    autoUpdater.on("error", onError);
+
+    autoUpdater.checkForUpdates().catch((error) => {
+      cleanup();
+      reject(error);
+    });
   });
 }
 
@@ -204,33 +319,78 @@ ipcMain.handle("desktop-open-mailto", async (_event, url) => {
 });
 
 ipcMain.handle("desktop-export-database", async () => {
-  try {
-    const sourcePath = getActiveDbPath();
-    if (!fs.existsSync(sourcePath)) {
-      return { ok: false, error: `Database not found at ${sourcePath}` };
-    }
+  return exportDatabaseBackupWithDialog();
+});
 
-    const defaultName = `payroll-backup-${formatDateForFilename(new Date())}.sqlite`;
-    const defaultDir = app.getPath("documents");
-    const dialogResult = await dialog.showSaveDialog(mainWindow ?? undefined, {
-      title: "Export payroll database backup",
-      defaultPath: path.join(defaultDir, defaultName),
-      filters: [
-        { name: "SQLite Database", extensions: ["sqlite", "db"] },
-        { name: "All Files", extensions: ["*"] },
-      ],
-      properties: ["createDirectory", "showOverwriteConfirmation"],
+ipcMain.handle("desktop-run-software-update", async () => {
+  if (!app.isPackaged) {
+    return { ok: false, error: "Software update is available in the installed desktop app only." };
+  }
+
+  try {
+    setupAutoUpdates();
+
+    const backupResult = await exportDatabaseBackupWithDialog({
+      title: "Export payroll database backup before update",
+      message: "Choose where to save your required backup before the software update starts.",
+      defaultName: `payroll-backup-before-update-${formatDateForFilename(new Date())}.sqlite`,
     });
 
-    if (dialogResult.canceled || !dialogResult.filePath) {
-      return { ok: true, canceled: true };
+    if (backupResult.canceled) {
+      return { ok: true, canceled: true, stage: "backup" };
+    }
+    if (!backupResult.ok) {
+      return backupResult;
     }
 
-    fs.copyFileSync(sourcePath, dialogResult.filePath);
-    writeLog(`Exported database backup to ${dialogResult.filePath}`);
-    return { ok: true, path: dialogResult.filePath };
+    const updateResult = await checkForUpdatesOnce();
+    if (!updateResult.available) {
+      return {
+        ok: true,
+        backupPath: backupResult.path,
+        noUpdate: true,
+        message: "You already have the latest version installed.",
+      };
+    }
+
+    await autoUpdater.downloadUpdate();
+    writeLog(`Software update download started after backup export to ${backupResult.path}`);
+    return {
+      ok: true,
+      backupPath: backupResult.path,
+      updateStarted: true,
+      version: updateResult.info?.version,
+    };
   } catch (error) {
-    writeLog(`Database export failed: ${error?.message || error}`);
+    writeLog(`Software update failed: ${error?.message || error}`);
+    return { ok: false, error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("desktop-email-paystub", async (_event, payload) => {
+  try {
+    const pdfPath = await createPayStubPdf(payload);
+    try {
+      await openOutlookDraftWithAttachment({
+        recipient: payload.recipient,
+        subject: payload.subject,
+        body: payload.body,
+        attachmentPath: pdfPath,
+      });
+      writeLog(`Opened Outlook draft with paystub attachment ${pdfPath}`);
+      return { ok: true, path: pdfPath };
+    } catch (error) {
+      writeLog(`Outlook draft with attachment failed: ${error?.message || error}`);
+      await shell.openPath(pdfPath);
+      await shell.openExternal(`mailto:${encodeURIComponent(payload.recipient)}?subject=${encodeURIComponent(payload.subject)}&body=${encodeURIComponent(`${payload.body}\n\nPaystub PDF saved at:\n${pdfPath}`)}`);
+      return {
+        ok: true,
+        path: pdfPath,
+        message: "Opened your default email app and saved the paystub PDF locally because Outlook attachment mode was unavailable.",
+      };
+    }
+  } catch (error) {
+    writeLog(`Paystub email failed: ${error?.message || error}`);
     return { ok: false, error: error?.message || String(error) };
   }
 });
@@ -267,22 +427,18 @@ ipcMain.handle("desktop-import-database", async () => {
     fs.copyFileSync(sourcePath, targetPath);
     writeLog(`Imported database from ${sourcePath} to ${targetPath}`);
 
-    const restartPrompt = await dialog.showMessageBox(mainWindow ?? undefined, {
-      type: "question",
-      title: "Restart required",
-      message: "Database imported successfully.",
-      detail: "The app must restart to load imported data. Restart now?",
-      buttons: ["Restart now", "Later"],
-      defaultId: 0,
-      cancelId: 1,
-    });
-
-    const shouldRestart = restartPrompt.response === 0;
-    if (shouldRestart) {
-      setTimeout(() => {
-        app.relaunch();
-        app.exit(0);
-      }, 150);
+    if (apiModule?.reloadDatabase) {
+      await apiModule.reloadDatabase();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.reloadIgnoringCache();
+      }
+      writeLog("Reloaded in-memory database after import.");
+      return {
+        ok: true,
+        path: sourcePath,
+        backupPath,
+        reloaded: true,
+      };
     }
 
     return {
@@ -290,7 +446,6 @@ ipcMain.handle("desktop-import-database", async () => {
       path: sourcePath,
       backupPath,
       restartRequired: true,
-      restarted: shouldRestart,
     };
   } catch (error) {
     writeLog(`Database import failed: ${error?.message || error}`);
@@ -308,6 +463,7 @@ async function startApiServer() {
   writeLog(`Static dir exists: ${fs.existsSync(staticDir)}`);
   writeLog(`Static index exists: ${fs.existsSync(path.join(staticDir, "index.html"))}`);
   const serverModule = await import(pathToFileURL(serverEntry).href);
+  apiModule = serverModule;
   const dataDir = resolveDesktopDataDir();
   activeDataDir = dataDir;
 

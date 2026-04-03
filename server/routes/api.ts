@@ -7,6 +7,7 @@ import {
   addEmployee,
   deleteClient,
   deleteEmployee,
+  findDuplicatePayRun,
   getClients,
   getComplianceTasks,
   getCompanyProfile,
@@ -187,6 +188,14 @@ apiRouter.post("/pay-runs", (request, response) => {
     return;
   }
 
+  const duplicateRun = findDuplicatePayRun(employee.id, draft.payPeriodStart, draft.payPeriodEnd);
+  if (duplicateRun) {
+    response.status(409).json({
+      message: `A pay run already exists for ${employee.fullName} for ${draft.payPeriodStart} to ${draft.payPeriodEnd}.`,
+    });
+    return;
+  }
+
   const client = getClients().find((item) => item.id === employee.clientId);
   const companyProfile = getCompanyProfile();
   const year = getTaxYearFromDraft(draft);
@@ -268,6 +277,14 @@ apiRouter.put("/pay-runs/:payRunId", (request, response) => {
 
   if (!employee) {
     response.status(404).json({ message: "Employee not found" });
+    return;
+  }
+
+  const duplicateRun = findDuplicatePayRun(employee.id, draft.payPeriodStart, draft.payPeriodEnd, payRunId);
+  if (duplicateRun) {
+    response.status(409).json({
+      message: `A pay run already exists for ${employee.fullName} for ${draft.payPeriodStart} to ${draft.payPeriodEnd}.`,
+    });
     return;
   }
 

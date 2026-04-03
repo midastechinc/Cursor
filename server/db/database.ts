@@ -20,10 +20,11 @@ const resolveDataDir = () => {
   return path.resolve(process.cwd(), "data");
 };
 
-const dataDir = resolveDataDir();
-const dbPath = path.join(dataDir, "payroll.sqlite");
-
-fs.mkdirSync(dataDir, { recursive: true });
+const getDbPath = () => {
+  const dataDir = resolveDataDir();
+  fs.mkdirSync(dataDir, { recursive: true });
+  return path.join(dataDir, "payroll.sqlite");
+};
 
 let db: Database;
 const companyProfileId = "company-profile";
@@ -290,7 +291,7 @@ const persistDatabase = () => {
     return;
   }
 
-  fs.writeFileSync(dbPath, Buffer.from(db.export()));
+  fs.writeFileSync(getDbPath(), Buffer.from(db.export()));
 };
 
 const queryPayloadRows = (sql: string) => {
@@ -492,6 +493,7 @@ const seedDefaults = () => {
 
 export const initializeDatabase = async () => {
   const SQL = await initSqlJs();
+  const dbPath = getDbPath();
   const existingFile = fs.existsSync(dbPath) ? fs.readFileSync(dbPath) : undefined;
   db = existingFile ? new SQL.Database(existingFile) : new SQL.Database();
   createTables();
@@ -607,6 +609,15 @@ export const getRecentPayRuns = () => {
 export const getPayRunById = (payRunId: string) => {
   return withCalculatedYtd(getAllPayRuns())
     .find((item) => item.id === payRunId);
+};
+
+export const findDuplicatePayRun = (employeeId: string, payPeriodStart: string, payPeriodEnd: string, excludedPayRunId?: string) => {
+  return withCalculatedYtd(getAllPayRuns())
+    .find((item) =>
+      item.employeeId === employeeId
+      && item.payPeriodStart === payPeriodStart
+      && item.payPeriodEnd === payPeriodEnd
+      && item.id !== excludedPayRunId);
 };
 
 export const getEmployeeYtdTotals = (employeeId: string, year: number, excludedPayRunId?: string) => {

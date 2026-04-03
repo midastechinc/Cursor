@@ -28,8 +28,14 @@ type DesktopApiResult = {
   ok: boolean;
   canceled?: boolean;
   error?: string;
+  message?: string;
   path?: string;
   backupPath?: string | null;
+  noUpdate?: boolean;
+  reloaded?: boolean;
+  stage?: string;
+  updateStarted?: boolean;
+  version?: string;
   restartRequired?: boolean;
   restarted?: boolean;
 };
@@ -39,8 +45,10 @@ type DesktopBridge = {
   isDesktop?: boolean;
   printCurrentWindow?: () => Promise<DesktopApiResult>;
   openMailto?: (url: string) => Promise<DesktopApiResult>;
+  emailPayStub?: (payload: { recipient: string; subject: string; body: string; html: string; employeeName: string; payPeriodStart: string; payPeriodEnd: string }) => Promise<DesktopApiResult>;
   exportDatabase?: () => Promise<DesktopApiResult>;
   importDatabase?: () => Promise<DesktopApiResult>;
+  runSoftwareUpdate?: () => Promise<DesktopApiResult>;
 };
 
 const getDesktopBridge = () =>
@@ -281,7 +289,16 @@ async function getJson<T>(url: string, init?: RequestInit) {
   });
 
   if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}`);
+    let message = `Request failed with status ${response.status}`;
+    try {
+      const errorPayload = await response.json() as { message?: string };
+      if (errorPayload.message) {
+        message = errorPayload.message;
+      }
+    } catch {
+      // Keep the default fallback when the response is not JSON.
+    }
+    throw new Error(message);
   }
 
   return (await response.json()) as T;
@@ -1066,9 +1083,10 @@ const printPayStub = (
   };
 };
 
-const emailPayStubFromHistory = (
+const emailPayStubFromHistory = async (
   run: PayRunRecord,
   fallbackEmployee?: Employee,
+  fallbackCompanyProfile?: CompanyProfile,
   fallbackClient?: Client,
 ) => {
   const recipient = fallbackEmployee?.email?.trim();
@@ -1087,9 +1105,27 @@ const emailPayStubFromHistory = (
     "",
     "To print or save the official paystub PDF, use the Payroll app history and click Print.",
   ];
-  const body = encodeURIComponent(bodyLines.join("\n"));
-  const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${subject}&body=${body}`;
+  const plainSubject = `Paystub - ${run.employeeName} - ${formatPayPeriod(run.payPeriodStart, run.payPeriodEnd)}`;
+  const plainBody = bodyLines.join("\n");
+  const markup = buildPayStubMarkup(run, fallbackEmployee, fallbackCompanyProfile, fallbackClient);
   const desktopApi = getDesktopBridge();
+  if (desktopApi?.emailPayStub) {
+    const result = await desktopApi.emailPayStub({
+      recipient,
+      subject: plainSubject,
+      body: plainBody,
+      html: markup,
+      employeeName: run.employeeName,
+      payPeriodStart: run.payPeriodStart,
+      payPeriodEnd: run.payPeriodEnd,
+    });
+    if (!result.ok) {
+      throw new Error(result.error || "Could not prepare paystub email.");
+    }
+    return;
+  }
+  const body = encodeURIComponent(plainBody);
+  const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${subject}&body=${body}`;
   if (desktopApi?.openMailto) {
     void desktopApi.openMailto(mailtoUrl);
     return;
@@ -1164,7 +1200,28 @@ const buildPd7aReportMarkup = ({
       @page { size: Letter portrait; margin: 0.5in; }
       :root { font-family: Arial, Helvetica, sans-serif; color-scheme: light; --ink: #111; --muted: #5d5d5d; }
       * { box-sizing: border-box; }
-      body { margin: 0; color: var(--ink); }
+      body { margin: 0; color: var(--ink); background: #efefef; padding: 12px; }
+      .preview-toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        justify-content: flex-end;
+        margin: 0 auto 10px;
+        max-width: 7.8in;
+      }
+      .preview-toolbar button {
+        border: 1px solid #0f4fb8;
+        border-radius: 999px;
+        padding: 10px 16px;
+        background: #1152b1;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        box-shadow: 0 10px 24px rgba(17, 82, 177, 0.18);
+      }
+      .preview-toolbar button:hover { background: #0d4492; }
       .sheet { max-width: 7.8in; margin: 0 auto; }
       .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 14px; }
       .title { font-weight: 700; font-size: 20px; margin: 0; }
@@ -1181,6 +1238,9 @@ const buildPd7aReportMarkup = ({
     </style>
   </head>
   <body>
+    <div class="preview-toolbar">
+      <button type="button" onclick="window.print()">Print PDF</button>
+    </div>
     <main class="sheet">
       <div class="top">
         <div>
@@ -1239,6 +1299,14 @@ const buildPd7aReportMarkup = ({
         <span>Page 1</span>
       </div>
     </main>
+    <script>
+      window.addEventListener('keydown', function (event) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
+          event.preventDefault();
+          window.print();
+        }
+      });
+    </script>
   </body>
 </html>`;
 };
@@ -1252,12 +1320,6 @@ const printPd7aReportWindow = (input: Pd7aReportInput) => {
   printWindow.document.write(buildPd7aReportMarkup(input));
   printWindow.document.close();
   printWindow.focus();
-  printWindow.onload = () => {
-    printWindow.print();
-    printWindow.onafterprint = () => {
-      printWindow.close();
-    };
-  };
 };
 
 const getFieldLabel = (config: Record<string, { label: string; required: boolean }>, key: string, fallback: string) =>
@@ -1299,6 +1361,8 @@ const isValidPostalCode = (value: string) => {
 };
 
 function AppV2() {
+  const desktopBridge = getDesktopBridge();
+  const isDesktopApp = Boolean(desktopBridge?.isDesktop);
   const [viewMode, setViewMode] = useState<ViewMode>("payroll");
   const [adminTab, setAdminTab] = useState<AdminTab>("company");
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(emptyCompanyProfile);
@@ -1334,6 +1398,7 @@ function AppV2() {
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [isExportingDatabase, setIsExportingDatabase] = useState(false);
   const [isImportingDatabase, setIsImportingDatabase] = useState(false);
+  const [isRunningSoftwareUpdate, setIsRunningSoftwareUpdate] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Connecting payroll studio...");
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const clientMenuContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2238,6 +2303,20 @@ function AppV2() {
     setIsSavingRun(true);
     try {
       const isEditing = Boolean(editingPayRunId);
+      const duplicateRun = recentPayRuns.find((item) =>
+        item.employeeId === selectedEmployee.id
+        && item.payPeriodStart === draft.payPeriodStart
+        && item.payPeriodEnd === draft.payPeriodEnd
+        && item.id !== editingPayRunId);
+      if (duplicateRun) {
+        const shouldContinue = window.confirm(
+          `${selectedEmployee.fullName} already has a pay run saved for ${formatPayPeriod(draft.payPeriodStart, draft.payPeriodEnd)}.\n\nDo you want to save another one anyway?`,
+        );
+        if (!shouldContinue) {
+          setStatusMessage("Duplicate pay run save canceled.");
+          return;
+        }
+      }
       const payRun = await getJson<PayRunRecord>(isEditing ? `/api/pay-runs/${editingPayRunId}` : "/api/pay-runs", {
         method: isEditing ? "PUT" : "POST",
         body: JSON.stringify({
@@ -2373,8 +2452,9 @@ function AppV2() {
         selectedEmployee,
         companyProfile,
         selectedClient,
+        false,
       );
-      setStatusMessage(`Opened printable pay stub preview for ${selectedEmployee.fullName}.`);
+      setStatusMessage(`Opened pay stub preview for ${selectedEmployee.fullName}.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not print the pay stub.");
     }
@@ -2384,24 +2464,22 @@ function AppV2() {
     try {
       const fallbackEmployee = employees.find((item) => item.id === run.employeeId);
       const fallbackClient = clients.find((item) => item.id === (run.clientId ?? fallbackEmployee?.clientId));
-      const shouldAutoOpenPrint = !getDesktopBridge();
-      printPayStub(run, fallbackEmployee, companyProfile, fallbackClient, shouldAutoOpenPrint);
-      setStatusMessage(`Opened printable pay stub for ${run.employeeName}.`);
+      printPayStub(run, fallbackEmployee, companyProfile, fallbackClient, false);
+      setStatusMessage(`Opened pay stub preview for ${run.employeeName}.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not print the pay stub.");
     }
   };
 
   const exportDatabaseBackup = async () => {
-    const desktopApi = getDesktopBridge();
-    if (!desktopApi?.exportDatabase) {
+    if (!desktopBridge?.exportDatabase) {
       setStatusMessage("Database export is available in the desktop app only.");
       return;
     }
 
     setIsExportingDatabase(true);
     try {
-      const result = await desktopApi.exportDatabase();
+      const result = await desktopBridge.exportDatabase();
       if (result.canceled) {
         setStatusMessage("Database export canceled.");
         return;
@@ -2418,21 +2496,25 @@ function AppV2() {
   };
 
   const importDatabaseBackup = async () => {
-    const desktopApi = getDesktopBridge();
-    if (!desktopApi?.importDatabase) {
+    if (!desktopBridge?.importDatabase) {
       setStatusMessage("Database import is available in the desktop app only.");
       return;
     }
 
     setIsImportingDatabase(true);
     try {
-      const result = await desktopApi.importDatabase();
+      const result = await desktopBridge.importDatabase();
       if (result.canceled) {
         setStatusMessage("Database import canceled.");
         return;
       }
       if (!result.ok) {
         throw new Error(result.error || "Could not import database.");
+      }
+      if (result.reloaded) {
+        const backupNote = result.backupPath ? ` Pre-import backup: ${result.backupPath}.` : "";
+        setStatusMessage(`Database imported successfully and reloaded.${backupNote}`);
+        return;
       }
       if (result.restarted) {
         setStatusMessage("Database imported. Restarting app now...");
@@ -2447,12 +2529,47 @@ function AppV2() {
     }
   };
 
-  const emailSavedPayStub = (run: PayRunRecord) => {
+  const runSoftwareUpdate = async () => {
+    if (!desktopBridge?.runSoftwareUpdate) {
+      setStatusMessage("Software update is available in the desktop app only.");
+      return;
+    }
+
+    setIsRunningSoftwareUpdate(true);
+    try {
+      const result = await desktopBridge.runSoftwareUpdate();
+      if (result.canceled) {
+        setStatusMessage("Software update canceled before the required backup was exported.");
+        return;
+      }
+      if (!result.ok) {
+        throw new Error(result.error || "Could not start software update.");
+      }
+      if (result.noUpdate) {
+        const backupNote = result.backupPath ? ` Backup saved to ${result.backupPath}.` : "";
+        setStatusMessage(`${result.message ?? "You already have the latest version installed."}${backupNote}`);
+        return;
+      }
+      if (result.updateStarted) {
+        const versionNote = result.version ? ` Version ${result.version} is downloading.` : " Update download has started.";
+        const backupNote = result.backupPath ? ` Backup saved to ${result.backupPath}.` : "";
+        setStatusMessage(`${versionNote}${backupNote} You will be prompted to restart when the update is ready.`);
+        return;
+      }
+      setStatusMessage(result.message ?? "Software update check finished.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not start software update.");
+    } finally {
+      setIsRunningSoftwareUpdate(false);
+    }
+  };
+
+  const emailSavedPayStub = async (run: PayRunRecord) => {
     try {
       const fallbackEmployee = employees.find((item) => item.id === run.employeeId);
       const fallbackClient = clients.find((item) => item.id === (run.clientId ?? fallbackEmployee?.clientId));
-      emailPayStubFromHistory(run, fallbackEmployee, fallbackClient);
-      setStatusMessage(`Opened email draft for ${run.employeeName}.`);
+      await emailPayStubFromHistory(run, fallbackEmployee, companyProfile, fallbackClient);
+      setStatusMessage(`Opened email draft for ${run.employeeName} with paystub PDF attachment.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not prepare paystub email.");
     }
@@ -2901,12 +3018,23 @@ function AppV2() {
                     <p className="admin-copy">
                       Export a full SQLite backup before updates, or import an existing SQLite file to restore prior data.
                     </p>
+                    <p className="admin-copy">
+                      Use Software update to install a new release. The app will require and save a backup before any update download begins.
+                    </p>
+                    {!isDesktopApp ? (
+                      <p className="admin-copy">
+                        Backup tools only open in the desktop app. If you launched this screen in a browser, start the Electron app with
+                        <code> npm run desktop:dev</code>
+                        or open the installed Midas Payroll app from Start.
+                      </p>
+                    ) : null}
                     <div className="panel-actions">
                       <button
                         className="secondary-button"
                         type="button"
                         onClick={exportDatabaseBackup}
-                        disabled={isExportingDatabase || isImportingDatabase}
+                        disabled={!isDesktopApp || isExportingDatabase || isImportingDatabase || isRunningSoftwareUpdate}
+                        title={!isDesktopApp ? "Available in the desktop app only." : undefined}
                       >
                         {isExportingDatabase ? "Exporting backup..." : "Export database backup"}
                       </button>
@@ -2914,9 +3042,19 @@ function AppV2() {
                         className="secondary-button"
                         type="button"
                         onClick={importDatabaseBackup}
-                        disabled={isExportingDatabase || isImportingDatabase}
+                        disabled={!isDesktopApp || isExportingDatabase || isImportingDatabase || isRunningSoftwareUpdate}
+                        title={!isDesktopApp ? "Available in the desktop app only." : undefined}
                       >
                         {isImportingDatabase ? "Importing database..." : "Import database backup"}
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={runSoftwareUpdate}
+                        disabled={!isDesktopApp || isExportingDatabase || isImportingDatabase || isRunningSoftwareUpdate}
+                        title={!isDesktopApp ? "Available in the desktop app only." : undefined}
+                      >
+                        {isRunningSoftwareUpdate ? "Backing up and checking for updates..." : "Software update"}
                       </button>
                     </div>
                   </div>
