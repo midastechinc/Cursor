@@ -1456,8 +1456,8 @@ function AppV2() {
     [activeClientIds, employees],
   );
   const visibleRecentPayRuns = useMemo(
-    () => recentPayRuns.filter((run) => !run.clientId || activeClientIds.has(run.clientId)),
-    [activeClientIds, recentPayRuns],
+    () => recentPayRuns,
+    [recentPayRuns],
   );
   const selectedClient = activeClients.find((client) => client.id === selectedClientId) ?? activeClients[0];
   const clientEmployees = useMemo(
@@ -1700,8 +1700,8 @@ function AppV2() {
     }));
   }, [previewYtd]);
   const recentPayRunsForClient = useMemo(
-    () => visibleRecentPayRuns.filter((run) => !selectedClient || run.clientId === selectedClient.id),
-    [selectedClient, visibleRecentPayRuns],
+    () => visibleRecentPayRuns,
+    [visibleRecentPayRuns],
   );
   const appSettings = companyProfile.settings ?? defaultAppSettings;
   const payrollFieldConfig = appSettings.payrollFormFields ?? defaultAppSettings.payrollFormFields;
@@ -2330,8 +2330,7 @@ function AppV2() {
           ? current.map((item) => (item.id === payRun.id ? payRun : item))
           : [payRun, ...current];
         return next
-          .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-          .slice(0, 8);
+          .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
       });
       setStatusMessage(isEditing ? `Updated pay run for ${payRun.employeeName}.` : `Saved pay run for ${payRun.employeeName}.`);
       setEditingPayRunId(null);
