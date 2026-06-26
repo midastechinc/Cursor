@@ -602,7 +602,6 @@ export const getComplianceTasks = () => {
 
 export const getRecentPayRuns = () => {
   return withCalculatedYtd(getAllPayRuns())
-    .slice(-8)
     .reverse();
 };
 
